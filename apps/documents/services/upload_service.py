@@ -4,7 +4,8 @@ from pathlib import Path
 from django.core.files.base import ContentFile
 from django.db import transaction
 
-from apps.documents.services.docx_image_extractor import extract_images_in_order
+from apps.documents.services.docx_image_extractor import \
+    extract_images_in_order
 from apps.processing.models import ProcessRun, SourceImage
 
 

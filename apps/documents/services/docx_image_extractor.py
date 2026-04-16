@@ -1,8 +1,8 @@
-from dataclasses import dataclass
-from pathlib import PurePosixPath
 import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
+from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 NAMESPACES = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",

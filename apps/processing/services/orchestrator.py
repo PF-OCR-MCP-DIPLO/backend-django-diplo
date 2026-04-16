@@ -3,7 +3,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.extraction.services.ocr_service import extract_raw_text
-from apps.extraction.services.structuring_service import extract_structured_data
+from apps.extraction.services.structuring_service import \
+    extract_structured_data
 from apps.extraction.services.validators import build_record_observations
 from apps.processing.models import ExtractedDeposit, ProcessRun, SourceImage
 

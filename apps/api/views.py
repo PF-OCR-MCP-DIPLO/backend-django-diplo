@@ -3,12 +3,11 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.api.serializers import (
-    ProcessRunDetailSerializer,
-    ProcessRunListSerializer,
-    UploadDocumentSerializer,
-)
-from apps.documents.services.upload_service import create_process_run_from_upload
+from apps.api.serializers import (ProcessRunDetailSerializer,
+                                  ProcessRunListSerializer,
+                                  UploadDocumentSerializer)
+from apps.documents.services.upload_service import \
+    create_process_run_from_upload
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.orchestrator import process_job
