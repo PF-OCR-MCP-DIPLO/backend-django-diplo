@@ -1,0 +1,97 @@
+import json
+import re
+import time
+
+import requests
+from django.conf import settings
+from pydantic import ValidationError
+
+from apps.extraction.providers.llm.base import BaseLLMProvider
+from apps.extraction.schemas import ListaConsignaciones
+
+
+class OllamaTextLLMProvider(BaseLLMProvider):
+    def extract(self, text, archivo_origen):
+        if not text.strip() or "EMPTY OCR RESULT" in text:
+            return []
+        system_prompt = self._build_initial_prompt(text)
+        current_prompt = system_prompt
+        for attempt in range(1, settings.LLM_MAX_RETRIES + 1):
+            payload = {
+                "model": settings.OLLAMA_MODEL,
+                "prompt": current_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.0,
+                    "num_predict": 512,
+                },
+            }
+            try:
+                response = requests.post(
+                    settings.OLLAMA_URL,
+                    json=payload,
+                    timeout=settings.OLLAMA_TIMEOUT,
+                )
+                response.raise_for_status()
+                raw_response = response.json().get("response", "").strip()
+                if raw_response.startswith("```"):
+                    raw_response = re.sub(r"^```(json)?\n?", "", raw_response)
+                    raw_response = re.sub(r"\n?```$", "", raw_response).strip()
+                try:
+                    json_data = json.loads(raw_response)
+                except json.JSONDecodeError as error:
+                    current_prompt = (
+                        system_prompt
+                        + "\n\nATENCION: Tu intento anterior fallo la validacion JSON con error: "
+                        + str(error)
+                        + "\nDevuelve solo el objeto JSON valido."
+                    )
+                    continue
+                try:
+                    obj = ListaConsignaciones.model_validate(json_data)
+                    extracted = []
+                    for consignacion in obj.consignaciones:
+                        payload_item = consignacion.model_dump()
+                        payload_item["archivo_origen"] = archivo_origen
+                        extracted.append(payload_item)
+                    return extracted
+                except ValidationError as error:
+                    current_prompt = (
+                        system_prompt
+                        + "\n\nATENCION: Tu ultimo JSON fue rechazado por estos errores: "
+                        + ", ".join(
+                            f"{entry['loc'][0]}: {entry['msg']}"
+                            for entry in error.errors()
+                        )
+                        + "\nCorrigelo y responde solo con JSON valido."
+                    )
+                    continue
+            except requests.exceptions.RequestException:
+                time.sleep(settings.LLM_RETRY_DELAY * attempt)
+        return []
+
+    def _build_initial_prompt(self, ocr_text):
+        return f"""
+Actua como un Auxiliar Contable Analista de Datos Experto.
+Analiza el siguiente texto OCR y extrae la informacion de la(s) consignacion(es).
+
+INSTRUCCIONES CRITICAS ESTRICTAS:
+1. Devuelve UNICAMENTE un JSON VALIDO siguiendo estrictamente este formato:
+{{
+  "consignaciones": [
+    {{
+      "fecha_consignacion": "DD/MM/YYYY",
+      "hora_consignacion": "HH:MM",
+      "referencia": "texto_alfanumerico",
+      "valor": "123000.00"
+    }}
+  ]
+}}
+2. Todas las claves y valores deben estar entre comillas dobles ("). DAME SOLO EL JSON PURO.
+3. El campo 'valor' y 'referencia' son obligatorios.
+4. El campo 'fecha_consignacion' debe ir en formato DD/MM/YYYY. Si no existe con certeza, usa null.
+5. Si no hay hora con certeza, usa null. Incluye 1 registro por imagen salvo que existan multiples transacciones explicitas.
+
+Texto OCR original a analizar:
+{ocr_text}
+"""
