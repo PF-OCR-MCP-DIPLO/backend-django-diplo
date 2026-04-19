@@ -34,6 +34,13 @@ def _create_log(process_run, source_image, stage, runtime_config, **kwargs):
     )
 
 
+def _safe_create_log(process_run, source_image, stage, runtime_config, **kwargs):
+    try:
+        return _create_log(process_run, source_image, stage, runtime_config, **kwargs)
+    except Exception:
+        return None
+
+
 def process_job(process_run):
     runtime_config = get_runtime_config()
     process_run = ProcessRun.objects.prefetch_related("source_images").get(
@@ -68,13 +75,14 @@ def process_job(process_run):
     total_records = 0
     fatal_error = ""
     failed_images = 0
-    _create_log(
+    _safe_create_log(
         process_run,
         None,
         "job_started",
         runtime_config,
         notes="Sequential processing started",
     )
+    final_status = ProcessRun.Status.FAILED
     try:
         for source_image in process_run.source_images.order_by("sequence_index", "id"):
             try:
@@ -82,7 +90,7 @@ def process_job(process_run):
                 ocr_result = extract_raw_text(source_image, runtime_config)
                 source_image.ocr_raw_text = ocr_result["text"]
                 source_image.ocr_provider = ocr_result["provider"]
-                _create_log(
+                _safe_create_log(
                     process_run,
                     source_image,
                     "ocr_extracted",
@@ -96,7 +104,7 @@ def process_job(process_run):
                 structured_result = extract_structured_data(
                     source_image, ocr_result["text"], runtime_config
                 )
-                _create_log(
+                _safe_create_log(
                     process_run,
                     source_image,
                     "llm_structured",
@@ -147,7 +155,7 @@ def process_job(process_run):
                         "updated_at",
                     ]
                 )
-                _create_log(
+                _safe_create_log(
                     process_run,
                     source_image,
                     "image_failed",
@@ -159,15 +167,15 @@ def process_job(process_run):
                 )
                 if not fatal_error:
                     fatal_error = str(error)
-        process_run.status = ProcessRun.Status.COMPLETED
+        final_status = ProcessRun.Status.COMPLETED
         if failed_images > 0:
-            process_run.status = ProcessRun.Status.COMPLETED_WITH_ERRORS
+            final_status = ProcessRun.Status.COMPLETED_WITH_ERRORS
         if failed_images == process_run.total_images:
-            process_run.status = ProcessRun.Status.FAILED
+            final_status = ProcessRun.Status.FAILED
     except Exception as error:
-        process_run.status = ProcessRun.Status.FAILED
         fatal_error = str(error)
-        _create_log(
+        final_status = ProcessRun.Status.FAILED
+        _safe_create_log(
             process_run,
             None,
             "job_failed",
@@ -175,24 +183,26 @@ def process_job(process_run):
             notes=fatal_error,
             is_error=True,
         )
-    process_run.total_records = total_records
-    process_run.finished_at = timezone.now()
-    process_run.error_message = fatal_error
-    process_run.save(
-        update_fields=[
-            "total_records",
-            "finished_at",
-            "status",
-            "error_message",
-            "updated_at",
-        ]
-    )
-    _create_log(
-        process_run,
-        None,
-        "job_finished",
-        runtime_config,
-        notes=f"status={process_run.status}",
-        is_error=process_run.status == ProcessRun.Status.FAILED,
-    )
+    finally:
+        process_run.total_records = total_records
+        process_run.finished_at = timezone.now()
+        process_run.status = final_status
+        process_run.error_message = fatal_error
+        process_run.save(
+            update_fields=[
+                "total_records",
+                "finished_at",
+                "status",
+                "error_message",
+                "updated_at",
+            ]
+        )
+        _safe_create_log(
+            process_run,
+            None,
+            "job_finished",
+            runtime_config,
+            notes=f"status={process_run.status}",
+            is_error=process_run.status == ProcessRun.Status.FAILED,
+        )
     return process_run
