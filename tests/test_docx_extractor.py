@@ -4,8 +4,7 @@ import zipfile
 
 from django.test import SimpleTestCase
 
-from apps.documents.services.docx_image_extractor import \
-    extract_images_in_order
+from apps.documents.services.docx_image_extractor import extract_images_in_order
 
 PNG_ONE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR2xQAAAAASUVORK5CYII="
