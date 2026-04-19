@@ -119,6 +119,15 @@ class ExtractionLogSerializer(serializers.ModelSerializer):
 
 
 class ProcessingSettingsSerializer(serializers.ModelSerializer):
+    has_ocr_api_key = serializers.SerializerMethodField(read_only=True)
+    has_llm_api_key = serializers.SerializerMethodField(read_only=True)
+    ocr_api_key = serializers.CharField(
+        required=False, allow_blank=True, write_only=True, max_length=255
+    )
+    llm_api_key = serializers.CharField(
+        required=False, allow_blank=True, write_only=True, max_length=255
+    )
+
     class Meta:
         model = ProcessingSettings
         fields = [
@@ -127,6 +136,55 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "ocr_model",
             "llm_provider",
             "llm_model",
+            "ocr_api_key",
+            "llm_api_key",
+            "has_ocr_api_key",
+            "has_llm_api_key",
             "request_timeout_seconds",
             "updated_at",
         ]
+
+    def get_has_ocr_api_key(self, obj):
+        return bool(obj.ocr_api_key)
+
+    def get_has_llm_api_key(self, obj):
+        return bool(obj.llm_api_key)
+
+    def validate(self, attrs):
+        instance = self.instance
+        ocr_mode = attrs.get("ocr_mode", getattr(instance, "ocr_mode", "vision"))
+        ocr_provider = attrs.get(
+            "ocr_provider", getattr(instance, "ocr_provider", "ollama")
+        )
+        llm_provider = attrs.get(
+            "llm_provider", getattr(instance, "llm_provider", "ollama")
+        )
+        ocr_api_key = attrs.get("ocr_api_key", getattr(instance, "ocr_api_key", ""))
+        llm_api_key = attrs.get("llm_api_key", getattr(instance, "llm_api_key", ""))
+
+        errors = {}
+        if ocr_mode in ("vision", "auto") and ocr_provider != "ollama":
+            if not ocr_api_key:
+                errors["ocr_api_key"] = [
+                    f"OCR provider '{ocr_provider}' requires API key."
+                ]
+            errors["ocr_provider"] = [
+                f"OCR provider '{ocr_provider}' is not operational in this MVP."
+            ]
+
+        if llm_provider != "ollama":
+            if not llm_api_key:
+                errors["llm_api_key"] = [
+                    f"LLM provider '{llm_provider}' requires API key."
+                ]
+            errors["llm_provider"] = [
+                f"LLM provider '{llm_provider}' is not operational in this MVP."
+            ]
+
+        if ocr_mode == "tesseract" and not attrs.get(
+            "ocr_model", getattr(instance, "ocr_model", "")
+        ):
+            attrs["ocr_model"] = "spa"
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs

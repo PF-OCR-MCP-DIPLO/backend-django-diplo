@@ -12,6 +12,8 @@ class RuntimeProcessingConfig:
     ocr_model: str
     llm_provider: str
     llm_model: str
+    ocr_api_key: str
+    llm_api_key: str
     request_timeout_seconds: int
 
 
@@ -38,6 +40,8 @@ def get_runtime_config():
         ocr_model=config.ocr_model,
         llm_provider=config.llm_provider,
         llm_model=config.llm_model,
+        ocr_api_key=config.ocr_api_key,
+        llm_api_key=config.llm_api_key,
         request_timeout_seconds=config.request_timeout_seconds,
     )
 
@@ -49,6 +53,8 @@ def as_snapshot_dict(runtime_config):
         "ocr_model": runtime_config.ocr_model,
         "llm_provider": runtime_config.llm_provider,
         "llm_model": runtime_config.llm_model,
+        "has_ocr_api_key": bool(runtime_config.ocr_api_key),
+        "has_llm_api_key": bool(runtime_config.llm_api_key),
         "request_timeout_seconds": runtime_config.request_timeout_seconds,
     }
 
@@ -68,5 +74,23 @@ def available_options():
             "openai": {"ocr": [], "llm": []},
             "gemini": {"ocr": [], "llm": []},
             "deepseek": {"ocr": [], "llm": []},
+        },
+        "provider_requirements": {
+            "ollama": {
+                "operational": True,
+                "requires_api_key": False,
+            },
+            "openai": {
+                "operational": False,
+                "requires_api_key": True,
+            },
+            "gemini": {
+                "operational": False,
+                "requires_api_key": True,
+            },
+            "deepseek": {
+                "operational": False,
+                "requires_api_key": True,
+            },
         },
     }

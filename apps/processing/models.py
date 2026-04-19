@@ -99,6 +99,8 @@ class ProcessingSettings(models.Model):
         max_length=32, choices=Provider.choices, default=Provider.OLLAMA
     )
     llm_model = models.CharField(max_length=128, blank=True)
+    ocr_api_key = models.CharField(max_length=255, blank=True)
+    llm_api_key = models.CharField(max_length=255, blank=True)
     request_timeout_seconds = models.PositiveIntegerField(default=320)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

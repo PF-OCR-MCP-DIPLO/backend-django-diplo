@@ -21,7 +21,6 @@ def _run_tesseract(source_image, runtime_config):
         text = provider.extract_text(
             source_image.image_file,
             model_name=runtime_config.ocr_model,
-            timeout_seconds=runtime_config.request_timeout_seconds,
         )
     finally:
         source_image.image_file.close()
