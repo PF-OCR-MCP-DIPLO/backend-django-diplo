@@ -7,11 +7,11 @@ from apps.extraction.providers.ocr.base import BaseOCRProvider
 
 
 class OllamaVisionOCRProvider(BaseOCRProvider):
-    def extract_text(self, image_file):
+    def extract_text(self, image_file, model_name=None, timeout_seconds=None):
         image_file.seek(0)
         image_b64 = base64.b64encode(image_file.read()).decode("utf-8")
         payload = {
-            "model": settings.OLLAMA_VISION_MODEL,
+            "model": model_name or settings.OLLAMA_VISION_MODEL,
             "prompt": "Transcribe all text in this image. Return only the raw text, no conversational filler.",
             "images": [image_b64],
             "stream": False,
@@ -22,7 +22,7 @@ class OllamaVisionOCRProvider(BaseOCRProvider):
         response = requests.post(
             settings.OLLAMA_URL,
             json=payload,
-            timeout=settings.OLLAMA_TIMEOUT,
+            timeout=timeout_seconds or settings.OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
         return response.json().get("response", "")

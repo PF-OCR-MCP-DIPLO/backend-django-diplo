@@ -6,6 +6,10 @@ from django.db import transaction
 
 from apps.documents.services.docx_image_extractor import extract_images_in_order
 from apps.processing.models import ProcessRun, SourceImage
+from apps.processing.services.settings_service import (
+    as_snapshot_dict,
+    get_runtime_config,
+)
 
 
 def create_process_run_from_upload(uploaded_file):
@@ -52,7 +56,4 @@ def _build_image_filename(process_run_id, sequence_index, source_name):
 
 
 def _provider_snapshot():
-    return {
-        "ocr_provider": "ollama_vision",
-        "llm_provider": "ollama_text",
-    }
+    return as_snapshot_dict(get_runtime_config())

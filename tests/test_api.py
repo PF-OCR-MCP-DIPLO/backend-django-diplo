@@ -201,7 +201,7 @@ class DocumentApiTests(TestCase):
             process_response = self.client.post(f"/api/jobs/{job_id}/process/")
         self.assertEqual(process_response.status_code, 200)
         payload = process_response.json()
-        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["status"], "completed_with_errors")
         self.assertEqual(payload["total_records"], 1)
         self.assertEqual(mocked_ocr.call_count, 1)
         self.assertEqual(payload["source_images"][0]["ocr_status"], "processed")
@@ -221,3 +221,63 @@ class DocumentApiTests(TestCase):
         job_id = upload_response.json()["id"]
         export_response = self.client.post(f"/api/jobs/{job_id}/export/")
         self.assertEqual(export_response.status_code, 409)
+
+    def test_settings_endpoints(self):
+        response = self.client.get("/api/processing/settings/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["ocr_mode"], "vision")
+        patch_response = self.client.patch(
+            "/api/processing/settings/",
+            {
+                "ocr_mode": "auto",
+                "ocr_provider": "ollama",
+                "ocr_model": "gemma4:e2b",
+                "llm_provider": "ollama",
+                "llm_model": "gemma3:1b-it-qat",
+                "request_timeout_seconds": 120,
+            },
+            format="json",
+        )
+        self.assertEqual(patch_response.status_code, 200)
+        options_response = self.client.get("/api/processing/settings/options/")
+        self.assertEqual(options_response.status_code, 200)
+        self.assertIn("auto", options_response.json()["ocr_modes"])
+
+    def test_job_logs_endpoint(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                side_effect=[
+                    [
+                        {
+                            "fecha_consignacion": "01/04/2026",
+                            "hora_consignacion": "10:00",
+                            "referencia": "REF001",
+                            "valor": 150000.0,
+                            "archivo_origen": "image1.png",
+                        }
+                    ],
+                    [],
+                ],
+            ),
+        ):
+            process_response = self.client.post(f"/api/jobs/{job_id}/process/")
+        self.assertEqual(process_response.status_code, 200)
+        logs_response = self.client.get(f"/api/jobs/{job_id}/logs/")
+        self.assertEqual(logs_response.status_code, 200)
+        self.assertGreaterEqual(len(logs_response.json()), 3)

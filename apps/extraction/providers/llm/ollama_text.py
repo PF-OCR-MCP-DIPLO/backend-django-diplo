@@ -11,14 +11,18 @@ from apps.extraction.schemas import ListaConsignaciones
 
 
 class OllamaTextLLMProvider(BaseLLMProvider):
-    def extract(self, text, archivo_origen):
+    def extract(
+        self, text, archivo_origen, model_name=None, timeout_seconds=None, max_retries=3
+    ):
         if not text.strip() or "EMPTY OCR RESULT" in text:
             return []
         system_prompt = self._build_initial_prompt(text)
         current_prompt = system_prompt
-        for attempt in range(1, settings.LLM_MAX_RETRIES + 1):
+        retries = max_retries or settings.LLM_MAX_RETRIES
+        timeout_value = timeout_seconds or settings.OLLAMA_TIMEOUT
+        for attempt in range(1, retries + 1):
             payload = {
-                "model": settings.OLLAMA_MODEL,
+                "model": model_name or settings.OLLAMA_MODEL,
                 "prompt": current_prompt,
                 "stream": False,
                 "options": {
@@ -30,7 +34,7 @@ class OllamaTextLLMProvider(BaseLLMProvider):
                 response = requests.post(
                     settings.OLLAMA_URL,
                     json=payload,
-                    timeout=settings.OLLAMA_TIMEOUT,
+                    timeout=timeout_value,
                 )
                 response.raise_for_status()
                 raw_response = response.json().get("response", "").strip()

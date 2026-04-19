@@ -4,14 +4,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.api.serializers import (
+    ExtractionLogSerializer,
     ProcessRunDetailSerializer,
     ProcessRunListSerializer,
+    ProcessingSettingsSerializer,
     UploadDocumentSerializer,
 )
 from apps.documents.services.upload_service import create_process_run_from_upload
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.orchestrator import process_job
+from apps.processing.services.settings_service import (
+    available_options,
+    get_or_create_processing_settings,
+)
 
 
 class HealthView(APIView):
@@ -80,7 +86,10 @@ class JobExportView(APIView):
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
-        if job.status != ProcessRun.Status.COMPLETED:
+        if job.status not in (
+            ProcessRun.Status.COMPLETED,
+            ProcessRun.Status.COMPLETED_WITH_ERRORS,
+        ):
             return Response(
                 {"detail": "Only completed jobs can be exported."},
                 status=status.HTTP_409_CONFLICT,
@@ -88,3 +97,42 @@ class JobExportView(APIView):
         exported = export_job_to_excel(job)
         serializer = ProcessRunDetailSerializer(exported, context={"request": request})
         return Response(serializer.data)
+
+
+class JobLogsView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, pk):
+        job = get_object_or_404(ProcessRun, pk=pk)
+        logs = job.extraction_logs.select_related("source_image").order_by(
+            "sequence_index", "id"
+        )
+        serializer = ExtractionLogSerializer(logs, many=True)
+        return Response(serializer.data)
+
+
+class ProcessingSettingsView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        serializer = ProcessingSettingsSerializer(get_or_create_processing_settings())
+        return Response(serializer.data)
+
+    def patch(self, request):
+        instance = get_or_create_processing_settings()
+        serializer = ProcessingSettingsSerializer(
+            instance, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class ProcessingSettingsOptionsView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response(available_options())

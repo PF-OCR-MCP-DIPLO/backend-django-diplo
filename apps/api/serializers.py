@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
-from apps.processing.models import ExtractedDeposit, ProcessRun, SourceImage
+from apps.processing.models import (
+    ExtractedDeposit,
+    ExtractionLog,
+    ProcessRun,
+    ProcessingSettings,
+    SourceImage,
+)
 
 
 class UploadDocumentSerializer(serializers.Serializer):
@@ -88,4 +94,39 @@ class ProcessRunDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "source_images",
+        ]
+
+
+class ExtractionLogSerializer(serializers.ModelSerializer):
+    source_image_id = serializers.IntegerField(source="source_image.id", read_only=True)
+
+    class Meta:
+        model = ExtractionLog
+        fields = [
+            "id",
+            "source_image_id",
+            "sequence_index",
+            "stage",
+            "provider",
+            "model",
+            "ocr_mode",
+            "raw_payload",
+            "raw_text",
+            "notes",
+            "is_error",
+            "created_at",
+        ]
+
+
+class ProcessingSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProcessingSettings
+        fields = [
+            "ocr_mode",
+            "ocr_provider",
+            "ocr_model",
+            "llm_provider",
+            "llm_model",
+            "request_timeout_seconds",
+            "updated_at",
         ]
