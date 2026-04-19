@@ -227,6 +227,8 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["ocr_mode"], "vision")
+        self.assertFalse(payload["has_ocr_api_key"])
+        self.assertFalse(payload["has_llm_api_key"])
         patch_response = self.client.patch(
             "/api/processing/settings/",
             {
@@ -243,6 +245,61 @@ class DocumentApiTests(TestCase):
         options_response = self.client.get("/api/processing/settings/options/")
         self.assertEqual(options_response.status_code, 200)
         self.assertIn("auto", options_response.json()["ocr_modes"])
+
+    def test_settings_validation_for_non_operational_providers(self):
+        response = self.client.patch(
+            "/api/processing/settings/",
+            {
+                "ocr_mode": "vision",
+                "ocr_provider": "openai",
+                "llm_provider": "deepseek",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertIn("ocr_provider", payload)
+        self.assertIn("ocr_api_key", payload)
+        self.assertIn("llm_provider", payload)
+        self.assertIn("llm_api_key", payload)
+
+    def test_tesseract_mode_processing_does_not_send_timeout_to_ocr(self):
+        settings_response = self.client.patch(
+            "/api/processing/settings/",
+            {
+                "ocr_mode": "tesseract",
+                "ocr_model": "spa",
+                "llm_provider": "ollama",
+                "llm_model": "gemma3:1b-it-qat",
+                "request_timeout_seconds": 45,
+            },
+            format="json",
+        )
+        self.assertEqual(settings_response.status_code, 200)
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+        with (
+            patch(
+                "apps.extraction.providers.ocr.tesseract.TesseractOCRProvider.extract_text",
+                side_effect=["OCR TESS 1", "OCR TESS 2"],
+            ) as mocked_ocr,
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[],
+            ),
+        ):
+            process_response = self.client.post(f"/api/jobs/{job_id}/process/")
+        self.assertEqual(process_response.status_code, 200)
+        first_call_kwargs = mocked_ocr.call_args_list[0].kwargs
+        self.assertNotIn("timeout_seconds", first_call_kwargs)
 
     def test_job_logs_endpoint(self):
         upload = SimpleUploadedFile(
