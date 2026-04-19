@@ -161,8 +161,19 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         )
         ocr_api_key = attrs.get("ocr_api_key", getattr(instance, "ocr_api_key", ""))
         llm_api_key = attrs.get("llm_api_key", getattr(instance, "llm_api_key", ""))
+        ocr_model = attrs.get("ocr_model", getattr(instance, "ocr_model", ""))
+        llm_model = attrs.get("llm_model", getattr(instance, "llm_model", ""))
+        request_timeout_seconds = attrs.get(
+            "request_timeout_seconds",
+            getattr(instance, "request_timeout_seconds", 320),
+        )
 
         errors = {}
+        if request_timeout_seconds < 5 or request_timeout_seconds > 600:
+            errors["request_timeout_seconds"] = [
+                "Timeout must be between 5 and 600 seconds."
+            ]
+
         if ocr_mode in ("vision", "auto") and ocr_provider != "ollama":
             if not ocr_api_key:
                 errors["ocr_api_key"] = [
@@ -171,6 +182,8 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             errors["ocr_provider"] = [
                 f"OCR provider '{ocr_provider}' is not operational in this MVP."
             ]
+        if ocr_mode in ("vision", "auto") and not ocr_model:
+            errors["ocr_model"] = ["OCR model is required for vision/auto mode."]
 
         if llm_provider != "ollama":
             if not llm_api_key:
@@ -180,6 +193,8 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             errors["llm_provider"] = [
                 f"LLM provider '{llm_provider}' is not operational in this MVP."
             ]
+        if not llm_model:
+            errors["llm_model"] = ["LLM model is required."]
 
         if ocr_mode == "tesseract":
             effective_ocr_model = attrs.get(
@@ -187,6 +202,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             )
             if not effective_ocr_model or ":" in effective_ocr_model:
                 attrs["ocr_model"] = "spa"
+            attrs["ocr_provider"] = "ollama"
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
