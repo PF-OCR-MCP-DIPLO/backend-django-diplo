@@ -208,6 +208,31 @@ class DocumentApiTests(TestCase):
         self.assertEqual(payload["source_images"][1]["ocr_status"], "failed")
         self.assertTrue(payload["source_images"][1]["error_message"])
 
+    def test_process_marks_job_failed_when_all_images_fail(self):
+        invalid_docx = build_docx_with_images(
+            {"image1.png": b"\x00\x01\x02", "image2.png": b"\x03\x04\x05"}
+        )
+        upload = SimpleUploadedFile(
+            "all-invalid.docx",
+            invalid_docx,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+        process_response = self.client.post(f"/api/jobs/{job_id}/process/")
+        self.assertEqual(process_response.status_code, 200)
+        payload = process_response.json()
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["total_records"], 0)
+        self.assertEqual(payload["source_images"][0]["ocr_status"], "failed")
+        self.assertEqual(payload["source_images"][1]["ocr_status"], "failed")
+        self.assertTrue(payload["finished_at"])
+        refreshed = self.client.get(f"/api/jobs/{job_id}/").json()
+        self.assertEqual(refreshed["status"], "failed")
+
     def test_export_requires_completed_job(self):
         upload = SimpleUploadedFile(
             "consignaciones.docx",
@@ -262,6 +287,41 @@ class DocumentApiTests(TestCase):
         self.assertIn("ocr_api_key", payload)
         self.assertIn("llm_provider", payload)
         self.assertIn("llm_api_key", payload)
+
+    def test_settings_validation_requires_models_and_timeout_range(self):
+        response = self.client.patch(
+            "/api/processing/settings/",
+            {
+                "ocr_mode": "vision",
+                "ocr_provider": "ollama",
+                "ocr_model": "",
+                "llm_provider": "ollama",
+                "llm_model": "",
+                "request_timeout_seconds": 1,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertIn("ocr_model", payload)
+        self.assertIn("llm_model", payload)
+        self.assertIn("request_timeout_seconds", payload)
+
+    def test_settings_tesseract_normalizes_provider(self):
+        response = self.client.patch(
+            "/api/processing/settings/",
+            {
+                "ocr_mode": "tesseract",
+                "ocr_provider": "openai",
+                "ocr_model": "spa",
+                "llm_provider": "ollama",
+                "llm_model": "gemma3:1b-it-qat",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["ocr_provider"], "ollama")
 
     def test_tesseract_mode_processing_does_not_send_timeout_to_ocr(self):
         settings_response = self.client.patch(
