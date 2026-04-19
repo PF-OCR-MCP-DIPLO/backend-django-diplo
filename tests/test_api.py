@@ -165,3 +165,59 @@ class DocumentApiTests(TestCase):
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(len(list_response.json()), 1)
         self.assertEqual(ProcessRun.objects.get(pk=job_id).deposits.count(), 2)
+
+    def test_process_marks_invalid_images_failed_without_calling_ocr(self):
+        invalid_docx = build_docx_with_images(
+            {"image1.png": PNG_ONE, "image2.png": b"\x00\x01\x02\x03"}
+        )
+        upload = SimpleUploadedFile(
+            "invalid-image.docx",
+            invalid_docx,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                return_value="OCR VALID IMAGE",
+            ) as mocked_ocr,
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[
+                    {
+                        "fecha_consignacion": "01/04/2026",
+                        "hora_consignacion": "10:00",
+                        "referencia": "REF001",
+                        "valor": 150000.0,
+                        "archivo_origen": "image1.png",
+                    }
+                ],
+            ),
+        ):
+            process_response = self.client.post(f"/api/jobs/{job_id}/process/")
+        self.assertEqual(process_response.status_code, 200)
+        payload = process_response.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["total_records"], 1)
+        self.assertEqual(mocked_ocr.call_count, 1)
+        self.assertEqual(payload["source_images"][0]["ocr_status"], "processed")
+        self.assertEqual(payload["source_images"][1]["ocr_status"], "failed")
+        self.assertTrue(payload["source_images"][1]["error_message"])
+
+    def test_export_requires_completed_job(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+        export_response = self.client.post(f"/api/jobs/{job_id}/export/")
+        self.assertEqual(export_response.status_code, 409)

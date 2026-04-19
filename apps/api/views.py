@@ -3,11 +3,12 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.api.serializers import (ProcessRunDetailSerializer,
-                                  ProcessRunListSerializer,
-                                  UploadDocumentSerializer)
-from apps.documents.services.upload_service import \
-    create_process_run_from_upload
+from apps.api.serializers import (
+    ProcessRunDetailSerializer,
+    ProcessRunListSerializer,
+    UploadDocumentSerializer,
+)
+from apps.documents.services.upload_service import create_process_run_from_upload
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.orchestrator import process_job
@@ -63,6 +64,11 @@ class JobProcessView(APIView):
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
+        if job.status == ProcessRun.Status.PROCESSING:
+            return Response(
+                {"detail": "This job is already processing."},
+                status=status.HTTP_409_CONFLICT,
+            )
         processed = process_job(job)
         serializer = ProcessRunDetailSerializer(processed, context={"request": request})
         return Response(serializer.data)
@@ -74,6 +80,11 @@ class JobExportView(APIView):
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
+        if job.status != ProcessRun.Status.COMPLETED:
+            return Response(
+                {"detail": "Only completed jobs can be exported."},
+                status=status.HTTP_409_CONFLICT,
+            )
         exported = export_job_to_excel(job)
         serializer = ProcessRunDetailSerializer(exported, context={"request": request})
         return Response(serializer.data)
