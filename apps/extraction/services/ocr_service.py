@@ -1,5 +1,8 @@
 from apps.extraction.providers.ocr.ollama_vision import OllamaVisionOCRProvider
-from apps.extraction.providers.ocr.tesseract import TesseractOCRProvider
+from apps.extraction.providers.ocr.tesseract import (
+    TesseractOCRProvider,
+    resolve_tesseract_language,
+)
 
 
 def _get_provider(provider_name):
@@ -16,6 +19,7 @@ def _get_provider(provider_name):
 
 def _run_tesseract(source_image, runtime_config):
     provider = TesseractOCRProvider()
+    tess_lang = resolve_tesseract_language(runtime_config.ocr_model)
     source_image.image_file.open("rb")
     try:
         text = provider.extract_text(
@@ -27,7 +31,7 @@ def _run_tesseract(source_image, runtime_config):
     return {
         "text": text,
         "provider": "tesseract",
-        "model": runtime_config.ocr_model,
+        "model": tess_lang,
         "mode": runtime_config.ocr_mode,
         "payload": {},
     }

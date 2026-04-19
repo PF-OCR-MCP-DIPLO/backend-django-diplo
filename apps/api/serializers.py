@@ -181,10 +181,12 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
                 f"LLM provider '{llm_provider}' is not operational in this MVP."
             ]
 
-        if ocr_mode == "tesseract" and not attrs.get(
-            "ocr_model", getattr(instance, "ocr_model", "")
-        ):
-            attrs["ocr_model"] = "spa"
+        if ocr_mode == "tesseract":
+            effective_ocr_model = attrs.get(
+                "ocr_model", getattr(instance, "ocr_model", "")
+            )
+            if not effective_ocr_model or ":" in effective_ocr_model:
+                attrs["ocr_model"] = "spa"
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
