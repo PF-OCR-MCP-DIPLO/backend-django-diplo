@@ -1,5 +1,16 @@
 # Initial Architecture
 
+## Current runtime (implemented)
+
+The processing runtime now follows a supervised multi-agent pattern inside the modular monolith.
+
+- `ProcessingSupervisorAgent`: coordinates one image lifecycle and delegates decisions.
+- `OCRAgent`: validates image input and extracts raw text.
+- `StructuringAgent`: transforms raw text into structured records.
+- `ValidationPersistenceAgent`: applies business observations and persists deposits.
+
+Execution remains sequential by document order to preserve auditability, but responsibilities are now split across explicit agents with a supervisor role.
+
 ## Current baseline
 
 The current Django repository contains only the default project skeleton in [MCP_back/settings.py](/home/gebert/djang-project/backend-diplo-final/MCP_back/settings.py) and [MCP_back/urls.py](/home/gebert/djang-project/backend-diplo-final/MCP_back/urls.py). There is no domain modeling or application structure yet.

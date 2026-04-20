@@ -87,11 +87,11 @@ INSTRUCCIONES CRITICAS ESTRICTAS:
       "fecha_consignacion": "DD/MM/YYYY",
       "hora_consignacion": "HH:MM",
       "referencia": "texto_alfanumerico",
-      "valor": "123000.00"
+            "valor": 123000.00
     }}
   ]
 }}
-2. Todas las claves y valores deben estar entre comillas dobles ("). DAME SOLO EL JSON PURO.
+2. Todas las claves deben estar entre comillas dobles ("). DAME SOLO EL JSON PURO.
 3. El campo 'valor' y 'referencia' son obligatorios.
 4. El campo 'fecha_consignacion' debe ir en formato DD/MM/YYYY. Si no existe con certeza, usa null.
 5. Si no hay hora con certeza, usa null. Incluye 1 registro por imagen salvo que existan multiples transacciones explicitas.

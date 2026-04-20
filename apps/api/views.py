@@ -76,6 +76,9 @@ class JobProcessView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
         processed = process_job(job)
+        processed = ProcessRun.objects.prefetch_related("source_images__deposits").get(
+            pk=processed.pk
+        )
         serializer = ProcessRunDetailSerializer(processed, context={"request": request})
         return Response(serializer.data)
 

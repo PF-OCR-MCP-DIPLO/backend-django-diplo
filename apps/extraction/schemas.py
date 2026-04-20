@@ -9,7 +9,7 @@ class ConsignacionBasica(BaseModel):
     fecha_consignacion: str | None = Field(default=None)
     hora_consignacion: str | None = Field(default=None)
     referencia: str
-    valor: str
+    valor: float
 
     @field_validator("fecha_consignacion")
     @classmethod
