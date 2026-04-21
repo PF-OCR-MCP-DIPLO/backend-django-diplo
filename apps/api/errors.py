@@ -5,6 +5,7 @@ from typing import Any
 
 from rest_framework.response import Response
 
+from apps.common.middleware.request_id import get_current_request_id
 
 @dataclass(frozen=True)
 class ApiError:
@@ -23,4 +24,7 @@ def api_error_response(
     payload: dict[str, Any] = {"error": {"code": code, "message": message}}
     if details is not None:
         payload["error"]["details"] = details
+    request_id = get_current_request_id()
+    if request_id:
+        payload["request_id"] = request_id
     return Response(payload, status=status_code)

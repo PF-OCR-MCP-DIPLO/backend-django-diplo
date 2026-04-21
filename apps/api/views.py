@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.api.errors import api_error_response
+from apps.api.auth import ApiKeyPermission
 from apps.api.serializers import (
     ExtractionLogSerializer,
     ProcessRunDetailSerializer,
@@ -12,6 +13,7 @@ from apps.api.serializers import (
     UploadDocumentSerializer,
 )
 from apps.documents.services.upload_service import create_process_run_from_upload
+from apps.documents.services.upload_service import UploadValidationError
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.orchestrator import process_job
@@ -32,11 +34,22 @@ class HealthView(APIView):
 class DocumentUploadView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "documents_upload"
 
     def post(self, request):
         serializer = UploadDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        process_run = create_process_run_from_upload(serializer.validated_data["file"])
+        try:
+            process_run = create_process_run_from_upload(
+                serializer.validated_data["file"]
+            )
+        except UploadValidationError as error:
+            return api_error_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=error.code,
+                message=error.message,
+                details=error.details or None,
+            )
         return Response(
             ProcessRunDetailSerializer(process_run, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
@@ -68,6 +81,10 @@ class JobDetailView(APIView):
 class JobProcessView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "jobs_process"
+
+    def get_permissions(self):
+        return [ApiKeyPermission()]
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
@@ -88,6 +105,10 @@ class JobProcessView(APIView):
 class JobExportView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "jobs_export"
+
+    def get_permissions(self):
+        return [ApiKeyPermission()]
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
@@ -122,6 +143,13 @@ class JobLogsView(APIView):
 class ProcessingSettingsView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "processing_settings"
+
+    def get_permissions(self):
+        # Read is public for DX; updates require API key when configured.
+        if self.request.method.upper() == "PATCH":
+            return [ApiKeyPermission()]
+        return []
 
     def get(self, request):
         serializer = ProcessingSettingsSerializer(get_or_create_processing_settings())

@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
 from apps.processing.models import ProcessRun
@@ -89,6 +90,27 @@ def build_docx_with_images(image_map):
     return buffer.getvalue()
 
 
+def build_docx_without_images():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Documento sin imagenes</w:t></w:r></w:p>
+  </w:body>
+</w:document>""",
+        )
+        archive.writestr(
+            "word/_rels/document.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>""",
+        )
+    buffer.seek(0)
+    return buffer.getvalue()
+
 class DocumentApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -110,6 +132,33 @@ class DocumentApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["error"]["code"], "validation_error")
         self.assertIn("file", payload["error"]["details"])
+
+    def test_upload_rejects_docx_without_images(self):
+        empty_docx = build_docx_without_images()
+        upload = SimpleUploadedFile(
+            "empty.docx",
+            empty_docx,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "docx_no_images")
+
+    def test_upload_rejects_corrupted_docx(self):
+        upload = SimpleUploadedFile(
+            "bad.docx",
+            b"not-a-zip",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "invalid_docx")
 
     def test_job_detail_not_found_uses_error_envelope(self):
         response = self.client.get("/api/jobs/999999/")
@@ -266,6 +315,34 @@ class DocumentApiTests(TestCase):
         self.assertEqual(payload["error"]["code"], "job_not_exportable")
         self.assertIn("complet", payload["error"]["message"].lower())
         self.assertEqual(payload["error"]["details"]["status"], "uploaded")
+
+    @override_settings(API_KEY="dev")
+    def test_sensitive_endpoints_require_api_key_when_configured(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+
+        # Missing key
+        process_response = self.client.post(f"/api/jobs/{job_id}/process/")
+        self.assertEqual(process_response.status_code, 403)
+        self.assertEqual(process_response.json()["error"]["code"], "forbidden")
+
+        export_response = self.client.post(f"/api/jobs/{job_id}/export/")
+        self.assertEqual(export_response.status_code, 403)
+        self.assertEqual(export_response.json()["error"]["code"], "forbidden")
+
+        # With key
+        process_ok = self.client.post(
+            f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+        )
+        self.assertEqual(process_ok.status_code, 200)
 
     def test_settings_endpoints(self):
         response = self.client.get("/api/processing/settings/")

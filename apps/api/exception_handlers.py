@@ -8,6 +8,7 @@ from rest_framework import exceptions, status
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
+from apps.common.middleware.request_id import get_current_request_id
 
 def _default_message_for_status(status_code: int) -> str:
     if status_code == status.HTTP_400_BAD_REQUEST:
@@ -73,6 +74,9 @@ def api_exception_handler(exc: Exception, context: dict[str, Any]) -> Response |
     payload: dict[str, Any] = {"error": {"code": code, "message": message}}
     if details is not None:
         payload["error"]["details"] = details
+    request_id = get_current_request_id()
+    if request_id:
+        payload["request_id"] = request_id
 
     response.data = payload
     return response

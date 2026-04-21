@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "drf_spectacular",
     "apps.api",
     "apps.documents",
     "apps.extraction",
@@ -28,6 +29,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.common.middleware.request_id.RequestIdMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -95,7 +97,23 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.FormParser",
     ],
     "EXCEPTION_HANDLER": "apps.api.exception_handlers.api_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "documents_upload": "20/min",
+        "jobs_process": "20/min",
+        "jobs_export": "30/min",
+        "processing_settings": "60/min",
+    },
 }
+
+# Minimal auth: enable by setting API_KEY env var. If empty, endpoints remain open.
+API_KEY = os.environ.get("API_KEY", "")
+
+# Enables deterministic stub OCR/LLM providers for E2E and local demos.
+STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"
 
 OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "ollama_vision")
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama_text")
@@ -105,3 +123,31 @@ OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:e2b")
 OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "320"))
 LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
 LLM_RETRY_DELAY = int(os.environ.get("LLM_RETRY_DELAY", "2"))
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Diplo OCR/LLM API",
+    "DESCRIPTION": "API para carga de documentos, procesamiento OCR/LLM, logs, exportación y configuración.",
+    "VERSION": os.environ.get("APP_VERSION", "0.1.0"),
+    "SERVE_INCLUDE_SCHEMA": False,
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {"()": "apps.common.logging.RequestIdLogFilter"},
+    },
+    "formatters": {
+        "standard": {
+            "format": "%(levelname)s %(asctime)s [%(name)s] [req:%(request_id)s] %(message)s"
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["request_id"],
+            "formatter": "standard",
+        }
+    },
+    "root": {"handlers": ["console"], "level": os.environ.get("LOG_LEVEL", "INFO")},
+}
