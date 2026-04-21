@@ -1,0 +1,16 @@
+[run]
+branch = True
+source =
+    apps
+    MCP_back
+omit =
+    */migrations/*
+    */__pycache__/*
+    */venv/*
+    tests/*
+
+[report]
+show_missing = True
+skip_covered = True
+fail_under = 0
+

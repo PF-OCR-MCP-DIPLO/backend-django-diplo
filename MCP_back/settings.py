@@ -94,6 +94,7 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.MultiPartParser",
         "rest_framework.parsers.FormParser",
     ],
+    "EXCEPTION_HANDLER": "apps.api.exception_handlers.api_exception_handler",
 }
 
 OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "ollama_vision")

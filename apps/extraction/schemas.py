@@ -57,7 +57,10 @@ class ConsignacionBasica(BaseModel):
             raise ValueError("referencia is too short")
         return value
 
-    @field_validator("valor")
+    # Pydantic (v2) tries to parse `float` before validators by default.
+    # We need `mode="before"` to normalize LatAm/ES currency strings like "50.000,00"
+    # into a number first, otherwise validation fails early.
+    @field_validator("valor", mode="before")
     @classmethod
     def validate_valor(cls, value):
         if not value or str(value).lower() in {"null", "none", ""}:

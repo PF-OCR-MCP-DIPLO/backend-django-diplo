@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.errors import api_error_response
 from apps.api.serializers import (
     ExtractionLogSerializer,
     ProcessRunDetailSerializer,
@@ -71,9 +72,10 @@ class JobProcessView(APIView):
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
         if job.status == ProcessRun.Status.PROCESSING:
-            return Response(
-                {"detail": "This job is already processing."},
-                status=status.HTTP_409_CONFLICT,
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_already_processing",
+                message="Esta ejecucion ya se encuentra en procesamiento.",
             )
         processed = process_job(job)
         processed = ProcessRun.objects.prefetch_related("source_images__deposits").get(
@@ -93,9 +95,11 @@ class JobExportView(APIView):
             ProcessRun.Status.COMPLETED,
             ProcessRun.Status.COMPLETED_WITH_ERRORS,
         ):
-            return Response(
-                {"detail": "Only completed jobs can be exported."},
-                status=status.HTTP_409_CONFLICT,
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_not_exportable",
+                message="Solo las ejecuciones completadas pueden exportarse.",
+                details={"status": job.status},
             )
         exported = export_job_to_excel(job)
         serializer = ProcessRunDetailSerializer(exported, context={"request": request})

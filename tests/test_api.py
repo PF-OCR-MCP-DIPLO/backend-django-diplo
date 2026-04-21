@@ -101,6 +101,22 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
 
+    def test_upload_rejects_non_docx_with_error_envelope(self):
+        upload = SimpleUploadedFile("file.txt", b"nope", content_type="text/plain")
+        response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        self.assertIn("file", payload["error"]["details"])
+
+    def test_job_detail_not_found_uses_error_envelope(self):
+        response = self.client.get("/api/jobs/999999/")
+        self.assertEqual(response.status_code, 404)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "not_found")
+
     def test_upload_process_export_and_detail(self):
         upload = SimpleUploadedFile(
             "consignaciones.docx",
@@ -246,6 +262,10 @@ class DocumentApiTests(TestCase):
         job_id = upload_response.json()["id"]
         export_response = self.client.post(f"/api/jobs/{job_id}/export/")
         self.assertEqual(export_response.status_code, 409)
+        payload = export_response.json()
+        self.assertEqual(payload["error"]["code"], "job_not_exportable")
+        self.assertIn("complet", payload["error"]["message"].lower())
+        self.assertEqual(payload["error"]["details"]["status"], "uploaded")
 
     def test_settings_endpoints(self):
         response = self.client.get("/api/processing/settings/")
@@ -283,10 +303,12 @@ class DocumentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         payload = response.json()
-        self.assertIn("ocr_provider", payload)
-        self.assertIn("ocr_api_key", payload)
-        self.assertIn("llm_provider", payload)
-        self.assertIn("llm_api_key", payload)
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        details = payload["error"]["details"]
+        self.assertIn("ocr_provider", details)
+        self.assertIn("ocr_api_key", details)
+        self.assertIn("llm_provider", details)
+        self.assertIn("llm_api_key", details)
 
     def test_settings_validation_requires_models_and_timeout_range(self):
         response = self.client.patch(
@@ -303,9 +325,11 @@ class DocumentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         payload = response.json()
-        self.assertIn("ocr_model", payload)
-        self.assertIn("llm_model", payload)
-        self.assertIn("request_timeout_seconds", payload)
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        details = payload["error"]["details"]
+        self.assertIn("ocr_model", details)
+        self.assertIn("llm_model", details)
+        self.assertIn("request_timeout_seconds", details)
 
     def test_settings_tesseract_normalizes_provider(self):
         response = self.client.patch(
