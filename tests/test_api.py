@@ -1,5 +1,6 @@
 import base64
 import io
+import requests
 import zipfile
 from unittest.mock import patch
 
@@ -100,6 +101,94 @@ class DocumentApiTests(TestCase):
         response = self.client.get("/api/health/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+
+    @patch("apps.api.views.AssistantAgent")
+    def test_assistant_chat_endpoint(self, assistant_cls):
+        agent = assistant_cls.return_value
+        agent.answer.return_value = {
+            "reply": "hola",
+            "tool": "none",
+            "data": {"kind": "none"},
+            "query_context": {},
+        }
+
+        response = self.client.post(
+            "/api/assistant/chat/",
+            {
+                "messages": [{"role": "user", "content": "hola"}],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["reply"], "hola")
+        agent.answer.assert_called_once_with(
+            messages=[{"role": "user", "content": "hola"}],
+            job_id=None,
+            errors=0,
+            query_context={},
+        )
+
+    def test_assistant_chat_endpoint_validates_role(self):
+        response = self.client.post(
+            "/api/assistant/chat/",
+            {
+                "messages": [{"role": "invalid", "content": "hola"}],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("messages", response.json())
+
+    @patch(
+        "apps.api.services.assistant_multiagent.IntentAgent._ollama_generate",
+        side_effect=requests.HTTPError("404 Client Error"),
+    )
+    def test_assistant_chat_endpoint_handles_llm_failure(self, _mock_generate):
+        response = self.client.post(
+            "/api/assistant/chat/",
+            {
+                "messages": [{"role": "user", "content": "hola"}],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["tool"], "none")
+        self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
+
+    @patch(
+        "apps.api.services.assistant_multiagent.ResponseAgent._ollama_generate",
+        return_value="Respuesta de prueba",
+    )
+    @patch(
+        "apps.api.services.assistant_multiagent.PlanningAgent._ollama_generate",
+        return_value='{"tool":"none","arguments":{}}',
+    )
+    @patch(
+        "apps.api.services.assistant_multiagent.IntentAgent._ollama_generate",
+        return_value='{"intent":"generic_chat","tool_hint":null,"confidence":0.9,"summary":"chat","arguments":{}}',
+    )
+    def test_assistant_chat_endpoint_works_without_allow_unsafe_sql_setting(
+        self,
+        _mock_intent,
+        _mock_planner,
+        _mock_response,
+    ):
+        response = self.client.post(
+            "/api/assistant/chat/",
+            {
+                "messages": [{"role": "user", "content": "hola"}],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["tool"], "none")
+        self.assertEqual(payload["reply"], "Respuesta de prueba")
 
     def test_upload_process_export_and_detail(self):
         upload = SimpleUploadedFile(

@@ -206,3 +206,28 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
+
+
+class AssistantChatSerializer(serializers.Serializer):
+    messages = serializers.ListField(
+        child=serializers.DictField(),
+        allow_empty=False,
+    )
+    job_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    errors = serializers.IntegerField(required=False, min_value=0, default=0)
+    query_context = serializers.DictField(required=False, default=dict)
+
+    def validate_messages(self, value):
+        allowed_roles = {"user", "assistant", "system"}
+        cleaned: list[dict[str, str]] = []
+        for item in value:
+            role = str(item.get("role") or "").strip()
+            content = item.get("content")
+            if role not in allowed_roles:
+                raise serializers.ValidationError(
+                    f"Invalid message role '{role}'. Allowed: user, assistant, system."
+                )
+            if not isinstance(content, str):
+                raise serializers.ValidationError("Each message content must be a string.")
+            cleaned.append({"role": role, "content": content})
+        return cleaned

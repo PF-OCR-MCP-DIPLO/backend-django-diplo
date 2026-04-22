@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.api.views import (
+    AssistantChatView,
     DocumentUploadView,
     HealthView,
     JobDetailView,
@@ -15,6 +16,7 @@ from apps.api.views import (
 urlpatterns = [
     path("", HealthView.as_view(), name="api-root"),
     path("health/", HealthView.as_view(), name="health"),
+    path("assistant/chat/", AssistantChatView.as_view(), name="assistant-chat"),
     path("documents/upload/", DocumentUploadView.as_view(), name="document-upload"),
     path("jobs/", JobListView.as_view(), name="job-list"),
     path("jobs/<int:pk>/", JobDetailView.as_view(), name="job-detail"),

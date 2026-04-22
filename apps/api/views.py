@@ -4,12 +4,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.api.serializers import (
+    AssistantChatSerializer,
     ExtractionLogSerializer,
     ProcessRunDetailSerializer,
     ProcessRunListSerializer,
     ProcessingSettingsSerializer,
     UploadDocumentSerializer,
 )
+from apps.api.services.assistant_agent import AssistantAgent
 from apps.documents.services.upload_service import create_process_run_from_upload
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
@@ -139,3 +141,22 @@ class ProcessingSettingsOptionsView(APIView):
 
     def get(self, request):
         return Response(available_options())
+
+
+class AssistantChatView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        serializer = AssistantChatSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+
+        agent = AssistantAgent()
+        result = agent.answer(
+            messages=payload["messages"],
+            job_id=payload.get("job_id"),
+            errors=payload.get("errors", 0),
+            query_context=payload.get("query_context") or {},
+        )
+        return Response(result)

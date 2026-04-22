@@ -1,0 +1,1592 @@
+from __future__ import annotations
+
+import json
+import logging
+import re
+from datetime import date, timedelta
+from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import Any
+
+import requests
+from django.conf import settings
+from django.db import connection
+from django.db.models import Avg, Count, Max, Min, Sum
+from django.utils import timezone
+from django.utils.timezone import is_aware
+
+from apps.api.serializers import (
+    ExtractionLogSerializer,
+    ProcessRunDetailSerializer,
+    ProcessRunListSerializer,
+    ProcessingSettingsSerializer,
+)
+from apps.api.services.shared_tools import upload_document_from_path
+from apps.processing.models import ExtractedDeposit, ExtractionLog, ProcessRun, SourceImage
+from apps.processing.services.excel_exporter import export_job_to_excel
+from apps.processing.services.orchestrator import process_job
+from apps.processing.services.settings_service import (
+    available_options,
+    get_or_create_processing_settings,
+    get_runtime_config,
+)
+
+
+_ALLOWED_TOOLS = {
+    "none",
+    "health_check",
+    "describe_database_schema",
+    "query_database_sql",
+    "list_jobs",
+    "get_job_status",
+    "get_job_logs",
+    "get_last_record_value",
+    "get_completed_records_summary",
+    "query_database",
+    "get_processing_settings",
+    "get_processing_settings_options",
+    "update_processing_settings",
+    "process_job",
+    "export_job_excel",
+    "upload_document",
+}
+
+
+logger = logging.getLogger(__name__)
+
+
+def _allow_unsafe_sql_enabled() -> bool:
+    return bool(getattr(settings, "ALLOW_UNSAFE_SQL", False))
+
+
+@dataclass(frozen=True)
+class AssistantIntent:
+    name: str
+    confidence: float
+    tool_hint: str | None = None
+    arguments: dict[str, Any] = field(default_factory=dict)
+    summary: str = ""
+
+
+@dataclass(frozen=True)
+class AssistantPlan:
+    tool: str
+    arguments: dict[str, Any]
+    intent_name: str
+    intent_summary: str
+
+
+class IntentAgent:
+    def __init__(self, model: str, timeout: int, provider: str, api_key: str = "") -> None:
+        self.model = model
+        self.timeout = timeout
+        self.provider = provider
+        self.api_key = api_key
+
+    def infer(
+        self,
+        messages: list[dict[str, str]],
+        job_id: int | None,
+        errors: int,
+        query_context: dict[str, Any] | None = None,
+    ) -> AssistantIntent:
+        last_user_message = self._last_user_message(messages)
+        if not last_user_message:
+            return AssistantIntent(name="unknown", confidence=0.0, summary="Sin mensaje del usuario")
+
+        direct_intent = self._infer_direct_intent(
+            last_user_message,
+            job_id,
+            query_context=query_context or {},
+        )
+        if direct_intent is not None:
+            return direct_intent
+
+        return self._infer_with_llm(messages, job_id=job_id, errors=errors)
+
+    def _last_user_message(self, messages: list[dict[str, str]]) -> str:
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                return (message.get("content") or "").strip().lower()
+        return ""
+
+    def _infer_direct_intent(
+        self,
+        text: str,
+        job_id: int | None,
+        query_context: dict[str, Any],
+    ) -> AssistantIntent | None:
+        if self._matches_followup_query(text) and isinstance(query_context.get("query"), dict):
+            return AssistantIntent(
+                name="db_query",
+                confidence=0.9,
+                tool_hint="query_database",
+                arguments={"query": {}},
+                summary="Refinamiento de una consulta anterior",
+            )
+
+        if self._matches_completed_records_total(text):
+            return AssistantIntent(
+                name="completed_records_total",
+                confidence=0.99,
+                tool_hint="get_completed_records_summary",
+                arguments={"job_id": job_id} if job_id is not None else {},
+                summary="Pregunta por el total acumulado de los registros completados",
+            )
+
+        if self._matches_latest_records(text):
+            return AssistantIntent(
+                name="db_query",
+                confidence=0.96,
+                tool_hint="query_database",
+                arguments={
+                    "query": {
+                        "source": "deposits",
+                        "select": [
+                            "id",
+                            "process_run_id",
+                            "referencia",
+                            "valor",
+                            "fecha_consignacion",
+                            "hora_consignacion",
+                            "created_at",
+                        ],
+                        "order_by": [{"field": "created_at", "direction": "desc"}],
+                        "limit": self._extract_limit(text),
+                    }
+                },
+                summary="Pregunta por los ultimos registros extraidos",
+            )
+
+        if self._matches_last_record_value(text):
+            return AssistantIntent(
+                name="last_record_value",
+                confidence=0.98,
+                tool_hint="get_last_record_value",
+                arguments={"job_id": job_id} if job_id is not None else {},
+                summary="Pregunta por el valor del ultimo registro",
+            )
+
+        if self._matches_recent_jobs(text):
+            return AssistantIntent(
+                name="recent_jobs",
+                confidence=0.92,
+                tool_hint="list_jobs",
+                summary="Pregunta por jobs recientes",
+            )
+
+        if self._matches_job_status(text):
+            return AssistantIntent(
+                name="job_status",
+                confidence=0.84,
+                tool_hint="get_job_status",
+                arguments={"job_id": job_id} if job_id is not None else {},
+                summary="Pregunta por el estado de un job",
+            )
+
+        if self._matches_job_logs(text):
+            return AssistantIntent(
+                name="job_logs",
+                confidence=0.84,
+                tool_hint="get_job_logs",
+                arguments={"job_id": job_id} if job_id is not None else {},
+                summary="Pregunta por logs de un job",
+            )
+
+        if self._matches_settings(text):
+            return AssistantIntent(
+                name="settings",
+                confidence=0.86,
+                tool_hint="get_processing_settings",
+                summary="Pregunta por la configuracion del procesamiento",
+            )
+
+        if self._matches_database_schema(text):
+            return AssistantIntent(
+                name="db_schema",
+                confidence=0.92,
+                tool_hint="describe_database_schema",
+                summary="Pregunta por tablas/campos disponibles para consultas",
+            )
+
+        if self._matches_sql_query(text):
+            return AssistantIntent(
+                name="sql_query",
+                confidence=0.93,
+                tool_hint="query_database_sql",
+                arguments={"sql": "", "limit": 100},
+                summary="Consulta SQL solicitada por el usuario",
+            )
+
+        return None
+
+    def _matches_last_record_value(self, text: str) -> bool:
+        value_terms = ("valor", "monto", "importe")
+        record_terms = (
+            "ultimo registro",
+            "último registro",
+            "ultima consignacion",
+            "última consignación",
+            "ultimo deposito",
+            "último depósito",
+            "ultimo valor",
+            "último valor",
+        )
+        return any(term in text for term in value_terms) and any(term in text for term in record_terms)
+
+    def _matches_latest_records(self, text: str) -> bool:
+        return (
+            "registro" in text
+            and any(term in text for term in ("ultimos", "últimos", "recientes", "latest"))
+            and not any(term in text for term in ("valor", "monto", "importe"))
+        )
+
+    def _extract_limit(self, text: str) -> int:
+        match = re.search(r"\b(\d{1,3})\b", text)
+        if match:
+            try:
+                return max(1, min(int(match.group(1)), 50))
+            except ValueError:
+                pass
+
+        words_to_numbers = {
+            "uno": 1,
+            "una": 1,
+            "dos": 2,
+            "tres": 3,
+            "cuatro": 4,
+            "cinco": 5,
+            "seis": 6,
+            "siete": 7,
+            "ocho": 8,
+            "nueve": 9,
+            "diez": 10,
+        }
+        for word, number in words_to_numbers.items():
+            if re.search(rf"\b{word}\b", text):
+                return number
+        return 5
+
+    def _matches_completed_records_total(self, text: str) -> bool:
+        total_terms = (
+            "total de todos los registros completados",
+            "total de registros completados",
+            "suma de registros completados",
+            "suma de los registros completados",
+            "monto total de los registros completados",
+            "valor total de los registros completados",
+            "total acumulado",
+            "cuanto suman",
+            "cuánto suman",
+            "todos los registros completados",
+        )
+        return any(term in text for term in total_terms)
+
+    def _matches_recent_jobs(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "jobs recientes",
+                "ultimos jobs",
+                "últimos jobs",
+                "listar jobs",
+                "lista de jobs",
+                "ver jobs",
+            )
+        )
+
+    def _matches_job_status(self, text: str) -> bool:
+        return any(phrase in text for phrase in ("estado del job", "estado del ultimo job", "status del job", "resultado del job"))
+
+    def _matches_job_logs(self, text: str) -> bool:
+        return any(phrase in text for phrase in ("logs", "bitacora", "historial de logs", "ver logs"))
+
+    def _matches_settings(self, text: str) -> bool:
+        return any(phrase in text for phrase in ("configuracion", "configuración", "settings", "ajustes"))
+
+    def _matches_database_schema(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "que se puede consultar",
+                "qué se puede consultar",
+                "que tablas",
+                "qué tablas",
+                "que campos",
+                "qué campos",
+                "estructura de la base de datos",
+                "schema",
+                "esquema",
+            )
+        )
+
+    def _matches_sql_query(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "sql",
+                "sentencia sql",
+                "consulta sql",
+                "query sql",
+                "haz un select",
+            )
+        )
+
+    def _matches_followup_query(self, text: str) -> bool:
+        followup_terms = (
+            "solo",
+            "ahora",
+            "filtra",
+            "del ultimo",
+            "del último",
+            "de este",
+            "de esos",
+            "solo los",
+            "solo las",
+            "y ahora",
+        )
+        return any(term in text for term in followup_terms)
+
+    def _infer_with_llm(self, messages: list[dict[str, str]], job_id: int | None, errors: int) -> AssistantIntent:
+        prompt = f"""
+Eres un agente de intencion para un dashboard de procesamiento.
+
+Contexto:
+- job_id_actual: {job_id if job_id is not None else 'null'}
+- errores_detectados: {errors}
+
+Clasifica el ultimo mensaje del usuario en uno de estos intentos:
+- last_record_value
+- completed_records_total
+- recent_jobs
+- job_status
+- job_logs
+- settings
+- process_job
+- export_job
+- db_schema
+- sql_query
+- db_query
+- generic_chat
+
+Responde SOLO con JSON valido y nada mas usando este esquema:
+{{
+    "intent": "...",
+    "tool_hint": "...|null",
+  "confidence": 0.0,
+  "summary": "...",
+  "arguments": {{ ... }}
+}}
+
+Conversacion:
+{self._format_conversation(messages)}
+""".strip()
+
+        raw_response = self._generate_text(prompt)
+        payload = self._extract_json(raw_response)
+        if not isinstance(payload, dict):
+            return AssistantIntent(name="unknown", confidence=0.0, summary="Clasificacion no disponible")
+
+        intent = str(payload.get("intent") or "unknown").strip()
+        tool_hint = payload.get("tool_hint")
+        if tool_hint == "null":
+            tool_hint = None
+        if tool_hint is not None:
+            tool_hint = str(tool_hint).strip()
+            if tool_hint not in _ALLOWED_TOOLS:
+                tool_hint = None
+
+        arguments = payload.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        confidence = payload.get("confidence", 0.0)
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        summary = str(payload.get("summary") or intent)
+        if tool_hint and "job_id" not in arguments and job_id is not None:
+            arguments["job_id"] = job_id
+
+        return AssistantIntent(
+            name=intent or "unknown",
+            confidence=confidence,
+            tool_hint=tool_hint,
+            arguments=arguments,
+            summary=summary,
+        )
+
+    def _format_conversation(self, messages: list[dict[str, str]]) -> str:
+        lines: list[str] = []
+        for message in messages[-8:]:
+            role = message.get("role", "user")
+            content = (message.get("content") or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        return "\n".join(lines)
+
+    def _generate_text(self, prompt: str) -> str:
+        if self.provider == "anthropic":
+            return self._anthropic_generate(prompt)
+        return self._ollama_generate(prompt)
+
+    def _ollama_generate(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 256,
+            },
+        }
+        response = requests.post(settings.OLLAMA_URL, json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+        return str(data.get("response", ""))
+
+    def _anthropic_generate(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "max_tokens": 1024,
+            "temperature": 0.1,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        response = requests.post(
+            getattr(settings, "ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"),
+            json=payload,
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": getattr(settings, "ANTHROPIC_VERSION", "2023-06-01"),
+                "content-type": "application/json",
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("content") or []
+        if content and isinstance(content, list):
+            first_item = content[0] or {}
+            if isinstance(first_item, dict):
+                return str(first_item.get("text", ""))
+        return str(data.get("text", ""))
+
+    def _extract_json(self, text: str) -> Any:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(json)?\n?", "", cleaned)
+            cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    return None
+            return None
+
+
+class PlanningAgent:
+    def __init__(self, model: str, timeout: int, provider: str, api_key: str = "") -> None:
+        self.model = model
+        self.timeout = timeout
+        self.provider = provider
+        self.api_key = api_key
+
+    def plan(
+        self,
+        intent: AssistantIntent,
+        messages: list[dict[str, str]],
+        job_id: int | None,
+        errors: int,
+        query_context: dict[str, Any] | None = None,
+    ) -> AssistantPlan:
+        safe_context = query_context or {}
+        if intent.tool_hint:
+            arguments = dict(intent.arguments)
+            if intent.tool_hint in {
+                "get_job_status",
+                "get_job_logs",
+                "get_last_record_value",
+                "get_completed_records_summary",
+                "query_database",
+                "process_job",
+                "export_job_excel",
+            } and "job_id" not in arguments and job_id is not None:
+                arguments["job_id"] = job_id
+            if intent.tool_hint == "query_database":
+                previous_query = safe_context.get("query") if isinstance(safe_context.get("query"), dict) else {}
+                merged_query = self._merge_query_context(previous_query, arguments.get("query") or {})
+                arguments["query"] = merged_query
+            return AssistantPlan(
+                tool=intent.tool_hint,
+                arguments=arguments,
+                intent_name=intent.name,
+                intent_summary=intent.summary,
+            )
+
+        conversation = self._format_conversation(messages)
+        sql_mode_rules = (
+            "- query_database_sql permite SQL libre para pruebas."
+            if _allow_unsafe_sql_enabled()
+            else "\n".join(
+                [
+                    "- query_database_sql solo permite SQL de lectura (SELECT o WITH ... SELECT).",
+                    "- No uses INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, PRAGMA ni multiples sentencias.",
+                ]
+            )
+        )
+        prompt = f"""
+Eres un agente planificador de herramientas para un dashboard de procesamiento.
+
+Contexto:
+- intent_detectado: {intent.name}
+- resumen_intencion: {intent.summary}
+- job_id_actual: {job_id if job_id is not None else 'null'}
+- errores_detectados: {errors}
+- query_context_actual: {json.dumps(safe_context, ensure_ascii=False, default=str)}
+
+Herramientas disponibles:
+- health_check
+- describe_database_schema
+- query_database_sql
+- list_jobs
+- get_job_status
+- get_job_logs
+- get_last_record_value
+- get_completed_records_summary
+- query_database
+- get_processing_settings
+- get_processing_settings_options
+- update_processing_settings
+- process_job
+- export_job_excel
+
+Responde SOLO con JSON valido y nada mas usando este esquema:
+{{
+    "tool": "none|health_check|describe_database_schema|query_database_sql|list_jobs|get_job_status|get_job_logs|get_last_record_value|get_completed_records_summary|query_database|get_processing_settings|get_processing_settings_options|update_processing_settings|process_job|export_job_excel",
+  "arguments": {{ ... }}
+}}
+
+Reglas:
+- Usa "none" si no hace falta ejecutar ninguna herramienta.
+- Si la intencion es recent_jobs, usa list_jobs.
+- Si la intencion es last_record_value, usa get_last_record_value.
+- Si la intencion es completed_records_total, usa get_completed_records_summary.
+- Si la intencion es db_schema, usa describe_database_schema.
+- Si la intencion es sql_query, usa query_database_sql con arguments.sql.
+- Si la intencion es db_query, usa query_database con un objeto `query` en arguments.
+- Si la intencion es job_status, usa get_job_status.
+- Si la intencion es job_logs, usa get_job_logs.
+- {sql_mode_rules}
+
+Esquema de `arguments` para query_database_sql:
+{{
+    "sql": "SELECT ...",
+    "limit": 100
+}}
+
+Esquema de `arguments.query` para query_database:
+{{
+    "source": "process_runs|deposits|source_images|logs",
+    "select": ["field1", "field2"],
+    "filters": [{{"field": "status", "op": "eq|ne|in|not_in|gt|gte|lt|lte|between|contains|icontains|startswith|istartswith|endswith|iendswith|isnull|date_eq|date_gte|date_lte|in_last_days", "value": "..."}}],
+    "aggregations": [{{"type": "count|distinct_count|sum|avg|min|max", "field": "id|valor|total_records", "as": "alias"}}],
+    "group_by": ["field"],
+    "order_by": [{{"field": "created_at", "direction": "asc|desc"}}],
+    "limit": 50
+}}
+
+Conversacion:
+{conversation}
+""".strip()
+
+        raw_response = self._generate_text(prompt)
+        payload = self._extract_json(raw_response)
+        if not isinstance(payload, dict):
+            return AssistantPlan(tool="none", arguments={}, intent_name=intent.name, intent_summary=intent.summary)
+
+        tool = str(payload.get("tool") or "none").strip()
+        if tool not in _ALLOWED_TOOLS:
+            tool = "none"
+
+        arguments = payload.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        if tool in {
+            "get_job_status",
+            "get_job_logs",
+            "get_last_record_value",
+            "query_database",
+            "process_job",
+            "export_job_excel",
+        } and "job_id" not in arguments and job_id is not None:
+            arguments["job_id"] = job_id
+
+        if tool == "query_database":
+            previous_query = safe_context.get("query") if isinstance(safe_context.get("query"), dict) else {}
+            arguments["query"] = self._merge_query_context(previous_query, arguments.get("query") or {})
+
+        return AssistantPlan(
+            tool=tool,
+            arguments=arguments,
+            intent_name=intent.name,
+            intent_summary=intent.summary,
+        )
+
+    def _merge_query_context(self, previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+        merged: dict[str, Any] = {
+            "source": current.get("source") or previous.get("source") or "process_runs",
+            "select": current.get("select") if isinstance(current.get("select"), list) else previous.get("select", []),
+            "filters": [],
+            "aggregations": current.get("aggregations") if isinstance(current.get("aggregations"), list) else previous.get("aggregations", []),
+            "group_by": current.get("group_by") if isinstance(current.get("group_by"), list) else previous.get("group_by", []),
+            "order_by": current.get("order_by") if isinstance(current.get("order_by"), list) else previous.get("order_by", []),
+            "limit": current.get("limit") or previous.get("limit") or 30,
+        }
+
+        previous_filters = previous.get("filters") if isinstance(previous.get("filters"), list) else []
+        current_filters = current.get("filters") if isinstance(current.get("filters"), list) else []
+        merged["filters"] = [*previous_filters, *current_filters]
+
+        if not merged["select"] and not merged["aggregations"]:
+            merged["select"] = ["id", "created_at"]
+
+        return merged
+
+    def _generate_text(self, prompt: str) -> str:
+        if self.provider == "anthropic":
+            return self._anthropic_generate(prompt)
+        return self._ollama_generate(prompt)
+
+    def _ollama_generate(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.15,
+                "num_predict": 256,
+            },
+        }
+        response = requests.post(settings.OLLAMA_URL, json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+        return str(data.get("response", ""))
+
+    def _anthropic_generate(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "max_tokens": 1024,
+            "temperature": 0.15,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        response = requests.post(
+            getattr(settings, "ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"),
+            json=payload,
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": getattr(settings, "ANTHROPIC_VERSION", "2023-06-01"),
+                "content-type": "application/json",
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("content") or []
+        if content and isinstance(content, list):
+            first_item = content[0] or {}
+            if isinstance(first_item, dict):
+                return str(first_item.get("text", ""))
+        return str(data.get("text", ""))
+
+    def _format_conversation(self, messages: list[dict[str, str]]) -> str:
+        lines: list[str] = []
+        for message in messages[-8:]:
+            role = message.get("role", "user")
+            content = (message.get("content") or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        return "\n".join(lines)
+
+    def _extract_json(self, text: str) -> Any:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(json)?\n?", "", cleaned)
+            cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    return None
+            return None
+
+
+_QUERY_SOURCES: dict[str, dict[str, Any]] = {
+    "process_runs": {
+        "model": ProcessRun,
+        "fields": {
+            "id",
+            "original_filename",
+            "status",
+            "total_images",
+            "total_records",
+            "error_message",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
+        },
+    },
+    "deposits": {
+        "model": ExtractedDeposit,
+        "fields": {
+            "id",
+            "process_run_id",
+            "source_image_id",
+            "sequence_index",
+            "fecha_consignacion",
+            "hora_consignacion",
+            "referencia",
+            "valor",
+            "is_current_month",
+            "created_at",
+            "process_run__status",
+            "process_run__original_filename",
+        },
+    },
+    "source_images": {
+        "model": SourceImage,
+        "fields": {
+            "id",
+            "process_run_id",
+            "sequence_index",
+            "source_name",
+            "content_hash",
+            "ocr_status",
+            "ocr_provider",
+            "error_message",
+            "created_at",
+            "updated_at",
+            "process_run__status",
+            "process_run__original_filename",
+        },
+    },
+    "logs": {
+        "model": ExtractionLog,
+        "fields": {
+            "id",
+            "process_run_id",
+            "source_image_id",
+            "sequence_index",
+            "stage",
+            "provider",
+            "model",
+            "ocr_mode",
+            "notes",
+            "is_error",
+            "created_at",
+        },
+    },
+}
+
+
+_SUPPORTED_FILTER_OPS = [
+    "eq",
+    "ne",
+    "in",
+    "not_in",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "between",
+    "contains",
+    "icontains",
+    "startswith",
+    "istartswith",
+    "endswith",
+    "iendswith",
+    "isnull",
+    "date_eq",
+    "date_gte",
+    "date_lte",
+    "in_last_days",
+]
+
+_SUPPORTED_AGGREGATIONS = [
+    "count",
+    "distinct_count",
+    "sum",
+    "avg",
+    "min",
+    "max",
+]
+
+
+def _to_json_safe(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return [_to_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _to_json_safe(item) for key, item in value.items()}
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat() if not is_aware(value) else value.isoformat()
+        except Exception:
+            return str(value)
+    return value
+
+
+class ToolExecutionAgent:
+    def execute(self, plan: AssistantPlan, job_id: int | None) -> Any:
+        if plan.tool == "none":
+            return {"kind": "none"}
+
+        if plan.tool == "health_check":
+            return {"status": "ok", "service": "backend-django-diplo"}
+
+        if plan.tool == "describe_database_schema":
+            return self._describe_database_schema()
+
+        if plan.tool == "query_database_sql":
+            return self._execute_query_database_sql(plan.arguments)
+
+        if plan.tool == "query_database":
+            return self._execute_query_database(plan.arguments.get("query"))
+
+        if plan.tool == "list_jobs":
+            jobs = ProcessRun.objects.order_by("-created_at")[:5]
+            return ProcessRunListSerializer(jobs, many=True, context={"request": None}).data
+
+        resolved_job_id = plan.arguments.get("job_id", job_id)
+        if resolved_job_id is not None:
+            try:
+                resolved_job_id = int(resolved_job_id)
+            except (TypeError, ValueError):
+                resolved_job_id = None
+
+        if plan.tool == "get_job_status":
+            if resolved_job_id is None:
+                return {"detail": "job_id is required"}
+            job = ProcessRun.objects.prefetch_related("source_images__deposits").get(pk=resolved_job_id)
+            return ProcessRunDetailSerializer(job, context={"request": None}).data
+
+        if plan.tool == "get_job_logs":
+            if resolved_job_id is None:
+                return {"detail": "job_id is required"}
+            job = ProcessRun.objects.get(pk=resolved_job_id)
+            logs = job.extraction_logs.select_related("source_image").order_by("sequence_index", "id")
+            return ExtractionLogSerializer(logs, many=True).data
+
+        if plan.tool == "get_last_record_value":
+            candidate_job = None
+            if resolved_job_id is not None:
+                candidate_job = (
+                    ProcessRun.objects.prefetch_related("source_images__deposits", "deposits")
+                    .filter(pk=resolved_job_id)
+                    .first()
+                )
+            if candidate_job is None:
+                candidate_job = (
+                    ProcessRun.objects.prefetch_related("source_images__deposits", "deposits")
+                    .filter(
+                        status__in=[ProcessRun.Status.COMPLETED, ProcessRun.Status.COMPLETED_WITH_ERRORS],
+                        total_records__gt=0,
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+            if candidate_job is None:
+                return {"detail": "No hay jobs completados con registros para calcular el ultimo valor."}
+
+            deposit = candidate_job.deposits.order_by("-sequence_index", "-id").first()
+            if deposit is None:
+                return {"detail": "El job seleccionado no tiene registros extraidos."}
+
+            return {
+                "job_id": candidate_job.id,
+                "original_filename": candidate_job.original_filename,
+                "status": candidate_job.status,
+                "total_records": candidate_job.total_records,
+                "last_record": {
+                    "referencia": deposit.referencia,
+                    "valor": str(deposit.valor),
+                    "fecha_consignacion": deposit.fecha_consignacion,
+                    "hora_consignacion": deposit.hora_consignacion,
+                    "sequence_index": deposit.sequence_index,
+                },
+            }
+
+        if plan.tool == "get_completed_records_summary":
+            summary = (
+                ProcessRun.objects.filter(
+                    status__in=[ProcessRun.Status.COMPLETED, ProcessRun.Status.COMPLETED_WITH_ERRORS]
+                )
+                .aggregate(
+                    total_records=Count("deposits"),
+                    total_value=Sum("deposits__valor"),
+                    jobs_count=Count("id", distinct=True),
+                )
+            )
+            return {
+                "jobs_count": int(summary.get("jobs_count") or 0),
+                "total_records": int(summary.get("total_records") or 0),
+                "total_value": str(summary.get("total_value") or Decimal("0")),
+                "currency": "COP",
+            }
+
+        if plan.tool == "get_processing_settings":
+            return ProcessingSettingsSerializer(get_or_create_processing_settings()).data
+
+        if plan.tool == "get_processing_settings_options":
+            return available_options()
+
+        if plan.tool == "update_processing_settings":
+            instance = get_or_create_processing_settings()
+            serializer = ProcessingSettingsSerializer(instance, data=plan.arguments, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return serializer.data
+
+        if plan.tool == "process_job":
+            if resolved_job_id is None:
+                return {"detail": "job_id is required"}
+            job = ProcessRun.objects.get(pk=resolved_job_id)
+            processed = process_job(job)
+            processed = ProcessRun.objects.prefetch_related("source_images__deposits").get(pk=processed.pk)
+            return ProcessRunDetailSerializer(processed, context={"request": None}).data
+
+        if plan.tool == "export_job_excel":
+            if resolved_job_id is None:
+                return {"detail": "job_id is required"}
+            job = ProcessRun.objects.get(pk=resolved_job_id)
+            exported = export_job_to_excel(job)
+            return ProcessRunDetailSerializer(exported, context={"request": None}).data
+
+        if plan.tool == "upload_document":
+            file_path = plan.arguments.get("file_path")
+            if not isinstance(file_path, str) or not file_path.strip():
+                return {"detail": "file_path is required"}
+            try:
+                return upload_document_from_path(file_path)
+            except ValueError as exc:
+                return {"detail": str(exc)}
+
+        return {"detail": f"Unsupported tool: {plan.tool}"}
+
+    def _execute_query_database(self, query: Any) -> dict[str, Any]:
+        if not isinstance(query, dict):
+            return {"detail": "query_database requiere arguments.query como objeto."}
+
+        source = str(query.get("source") or "").strip()
+        source_config = _QUERY_SOURCES.get(source)
+        if source_config is None:
+            return {
+                "detail": "source invalido. Usa process_runs, deposits, source_images o logs.",
+                "available_sources": list(_QUERY_SOURCES.keys()),
+            }
+
+        model = source_config["model"]
+        allowed_fields: set[str] = source_config["fields"]
+        queryset = model.objects.all()
+        warnings: list[str] = []
+
+        # Filters
+        filters = query.get("filters") if isinstance(query.get("filters"), list) else []
+        for item in filters:
+            if not isinstance(item, dict):
+                continue
+            field = str(item.get("field") or "").strip()
+            op = str(item.get("op") or "eq").strip()
+            value = item.get("value")
+            if field not in allowed_fields:
+                warnings.append(f"Filtro omitido: campo no permitido '{field}'.")
+                continue
+
+            try:
+                if op == "eq":
+                    queryset = queryset.filter(**{field: value})
+                elif op == "ne":
+                    queryset = queryset.exclude(**{field: value})
+                elif op == "in" and isinstance(value, list):
+                    queryset = queryset.filter(**{f"{field}__in": value})
+                elif op == "not_in" and isinstance(value, list):
+                    queryset = queryset.exclude(**{f"{field}__in": value})
+                elif op == "gt":
+                    queryset = queryset.filter(**{f"{field}__gt": value})
+                elif op == "gte":
+                    queryset = queryset.filter(**{f"{field}__gte": value})
+                elif op == "lt":
+                    queryset = queryset.filter(**{f"{field}__lt": value})
+                elif op == "lte":
+                    queryset = queryset.filter(**{f"{field}__lte": value})
+                elif op == "between" and isinstance(value, list) and len(value) == 2:
+                    queryset = queryset.filter(**{f"{field}__range": [value[0], value[1]]})
+                elif op == "contains" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__contains": value})
+                elif op == "icontains" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__icontains": value})
+                elif op == "startswith" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__startswith": value})
+                elif op == "istartswith" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__istartswith": value})
+                elif op == "endswith" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__endswith": value})
+                elif op == "iendswith" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__iendswith": value})
+                elif op == "isnull":
+                    queryset = queryset.filter(**{f"{field}__isnull": bool(value)})
+                elif op in {"date_eq", "date_gte", "date_lte"}:
+                    parsed_date = self._parse_date_value(value)
+                    if parsed_date is None:
+                        warnings.append(
+                            f"Filtro omitido: valor de fecha invalido para '{field}' con op '{op}'."
+                        )
+                        continue
+                    lookup = {
+                        "date_eq": f"{field}__date",
+                        "date_gte": f"{field}__date__gte",
+                        "date_lte": f"{field}__date__lte",
+                    }[op]
+                    queryset = queryset.filter(**{lookup: parsed_date})
+                elif op == "in_last_days":
+                    try:
+                        days = int(value)
+                    except (TypeError, ValueError):
+                        warnings.append(
+                            f"Filtro omitido: in_last_days requiere entero para '{field}'."
+                        )
+                        continue
+                    days = max(0, min(days, 3650))
+                    cutoff = timezone.now() - timedelta(days=days)
+                    queryset = queryset.filter(**{f"{field}__gte": cutoff})
+                else:
+                    warnings.append(
+                        f"Filtro omitido: operador no soportado '{op}' para campo '{field}'."
+                    )
+            except Exception as exc:
+                warnings.append(
+                    f"Filtro omitido: error aplicando op '{op}' en campo '{field}' ({exc.__class__.__name__})."
+                )
+
+        # Aggregations
+        aggregations = query.get("aggregations") if isinstance(query.get("aggregations"), list) else []
+        aggregate_expressions: dict[str, Any] = {}
+        for item in aggregations:
+            if not isinstance(item, dict):
+                continue
+            agg_type = str(item.get("type") or "").strip()
+            field = str(item.get("field") or "id").strip()
+            alias = str(item.get("as") or "").strip()
+            if field not in allowed_fields:
+                warnings.append(f"Agregacion omitida: campo no permitido '{field}'.")
+                continue
+            if not alias:
+                alias = f"{agg_type}_{field}".replace("__", "_")
+
+            if agg_type == "count":
+                aggregate_expressions[alias] = Count(field)
+            elif agg_type == "distinct_count":
+                aggregate_expressions[alias] = Count(field, distinct=True)
+            elif agg_type == "sum":
+                aggregate_expressions[alias] = Sum(field)
+            elif agg_type == "avg":
+                aggregate_expressions[alias] = Avg(field)
+            elif agg_type == "min":
+                aggregate_expressions[alias] = Min(field)
+            elif agg_type == "max":
+                aggregate_expressions[alias] = Max(field)
+            else:
+                warnings.append(f"Agregacion omitida: tipo no soportado '{agg_type}'.")
+
+        # Group by
+        group_by_raw = query.get("group_by") if isinstance(query.get("group_by"), list) else []
+        group_by = [str(field).strip() for field in group_by_raw if str(field).strip() in allowed_fields]
+        if isinstance(query.get("group_by"), list):
+            for raw_field in query.get("group_by") or []:
+                normalized = str(raw_field).strip()
+                if normalized and normalized not in allowed_fields:
+                    warnings.append(f"group_by omitido: campo no permitido '{normalized}'.")
+
+        # Select and limit
+        select_raw = query.get("select") if isinstance(query.get("select"), list) else []
+        select_fields = [str(field).strip() for field in select_raw if str(field).strip() in allowed_fields]
+        for raw_field in select_raw:
+            normalized = str(raw_field).strip()
+            if normalized and normalized not in allowed_fields:
+                warnings.append(f"select omitido: campo no permitido '{normalized}'.")
+        if not select_fields and not aggregate_expressions:
+            select_fields = [field for field in ("id", "created_at") if field in allowed_fields]
+            if source == "process_runs":
+                select_fields = [
+                    field
+                    for field in ("id", "original_filename", "status", "total_records", "created_at")
+                    if field in allowed_fields
+                ]
+
+        try:
+            limit = int(query.get("limit", 30))
+        except (TypeError, ValueError):
+            limit = 30
+        limit = max(1, min(limit, 200))
+
+        # Order by
+        order_by_raw = query.get("order_by") if isinstance(query.get("order_by"), list) else []
+        order_by_fields: list[str] = []
+        orderable_fields = set(allowed_fields)
+        orderable_fields.update(aggregate_expressions.keys())
+        orderable_fields.add("rows_count")
+        for item in order_by_raw:
+            if not isinstance(item, dict):
+                continue
+            field = str(item.get("field") or "").strip()
+            direction = str(item.get("direction") or "asc").strip().lower()
+            if field not in orderable_fields:
+                warnings.append(f"order_by omitido: campo no permitido '{field}'.")
+                continue
+            order_by_fields.append(f"-{field}" if direction == "desc" else field)
+
+        rows: list[dict[str, Any]]
+        try:
+            if group_by:
+                grouped = queryset.values(*group_by)
+                if aggregate_expressions:
+                    grouped = grouped.annotate(**aggregate_expressions)
+                else:
+                    grouped = grouped.annotate(rows_count=Count("id"))
+                if order_by_fields:
+                    grouped = grouped.order_by(*order_by_fields)
+                rows = list(grouped[:limit])
+            elif aggregate_expressions:
+                rows = [queryset.aggregate(**aggregate_expressions)]
+            else:
+                selected = queryset.values(*select_fields)
+                if order_by_fields:
+                    selected = selected.order_by(*order_by_fields)
+                rows = list(selected[:limit])
+        except Exception as exc:
+            return {
+                "detail": "No fue posible ejecutar la consulta con los criterios solicitados.",
+                "meta": {
+                    "warnings": [
+                        *warnings,
+                        f"Error de ejecucion: {exc.__class__.__name__}.",
+                    ]
+                },
+            }
+
+        return {
+            "source": source,
+            "rows": _to_json_safe(rows),
+            "meta": {
+                "rows_count": len(rows),
+                "limit": limit,
+                "group_by": group_by,
+                "has_aggregations": bool(aggregate_expressions),
+                "warnings": warnings,
+            },
+        }
+
+    def _describe_database_schema(self) -> dict[str, Any]:
+        sources: dict[str, Any] = {}
+        for source_name, config in _QUERY_SOURCES.items():
+            fields = sorted(config["fields"])
+            sources[source_name] = {
+                "fields": fields,
+                "sample_query": {
+                    "source": source_name,
+                    "select": fields[: min(4, len(fields))],
+                    "filters": [],
+                    "order_by": [{"field": fields[0], "direction": "desc"}] if fields else [],
+                    "limit": 20,
+                },
+            }
+
+        return {
+            "sources": sources,
+            "sql_tables": self._sql_tables_catalog(),
+            "supported_filter_ops": _SUPPORTED_FILTER_OPS,
+            "supported_aggregations": _SUPPORTED_AGGREGATIONS,
+            "limits": {"default": 30, "max": 200},
+        }
+
+    def _sql_tables_catalog(self) -> dict[str, Any]:
+        return {
+            ProcessRun._meta.db_table: sorted(_QUERY_SOURCES["process_runs"]["fields"]),
+            ExtractedDeposit._meta.db_table: sorted(_QUERY_SOURCES["deposits"]["fields"]),
+            SourceImage._meta.db_table: sorted(_QUERY_SOURCES["source_images"]["fields"]),
+            ExtractionLog._meta.db_table: sorted(_QUERY_SOURCES["logs"]["fields"]),
+        }
+
+    def _execute_query_database_sql(self, arguments: Any) -> dict[str, Any]:
+        if not isinstance(arguments, dict):
+            return {"detail": "query_database_sql requiere arguments como objeto."}
+
+        sql = str(arguments.get("sql") or "").strip()
+        if not sql:
+            return {"detail": "query_database_sql requiere arguments.sql."}
+
+        try:
+            limit = int(arguments.get("limit", 100))
+        except (TypeError, ValueError):
+            limit = 100
+        limit = max(1, limit)
+
+        if not _allow_unsafe_sql_enabled():
+            validation_error = self._validate_readonly_sql(sql)
+            if validation_error:
+                return {"detail": validation_error}
+
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(sql)
+                description = cursor.description or []
+                if description:
+                    columns = [col[0] for col in description]
+                    raw_rows = cursor.fetchmany(limit)
+                else:
+                    columns = []
+                    raw_rows = []
+                    affected = cursor.rowcount
+
+            rows = [
+                {columns[idx]: _to_json_safe(value) for idx, value in enumerate(row)}
+                for row in raw_rows
+            ]
+
+            response = {
+                "sql": sql,
+                "rows": rows,
+                "meta": {
+                    "rows_count": len(rows),
+                    "limit": limit,
+                    "columns": columns,
+                    "unsafe_sql_enabled": _allow_unsafe_sql_enabled(),
+                },
+            }
+            if not columns:
+                response["meta"]["rows_affected"] = affected
+            return response
+        except Exception as exc:
+            return {
+                "detail": "No fue posible ejecutar la sentencia SQL solicitada.",
+                "meta": {
+                    "error": exc.__class__.__name__,
+                    "unsafe_sql_enabled": _allow_unsafe_sql_enabled(),
+                },
+            }
+
+    def _validate_readonly_sql(self, sql: str) -> str | None:
+        stripped = sql.strip().rstrip(";")
+        normalized = stripped.lower()
+
+        if not normalized.startswith("select") and not normalized.startswith("with"):
+            return "Solo se permiten consultas SQL de lectura (SELECT o WITH ... SELECT)."
+
+        if ";" in stripped:
+            return "No se permiten multiples sentencias SQL en una sola consulta."
+
+        forbidden_patterns = [
+            r"\binsert\b",
+            r"\bupdate\b",
+            r"\bdelete\b",
+            r"\bdrop\b",
+            r"\balter\b",
+            r"\btruncate\b",
+            r"\bcreate\b",
+            r"\breplace\b",
+            r"\bpragma\b",
+            r"\battach\b",
+            r"\bdetach\b",
+            r"\bvacuum\b",
+        ]
+        for pattern in forbidden_patterns:
+            if re.search(pattern, normalized):
+                return "La sentencia contiene operaciones no permitidas para modo lectura."
+
+        return None
+
+    def _parse_date_value(self, value: Any) -> date | None:
+        if isinstance(value, date):
+            return value
+        if not isinstance(value, str):
+            return None
+
+        text = value.strip().lower()
+        today = timezone.localdate()
+        if text == "today":
+            return today
+        if text == "yesterday":
+            return today - timedelta(days=1)
+
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            try:
+                return date.fromisoformat(text)
+            except ValueError:
+                return None
+        return None
+
+
+class ResponseAgent:
+    def __init__(self, model: str, timeout: int, provider: str, api_key: str = "") -> None:
+        self.model = model
+        self.timeout = timeout
+        self.provider = provider
+        self.api_key = api_key
+
+    def compose(
+        self,
+        messages: list[dict[str, str]],
+        intent: AssistantIntent,
+        plan: AssistantPlan,
+        tool_payload: Any,
+        job_id: int | None,
+        errors: int,
+    ) -> str:
+        if plan.tool == "list_jobs" and isinstance(tool_payload, list):
+            return f"Encontré {len(tool_payload)} jobs recientes. Te los muestro en tarjetas en la interfaz."
+
+        if plan.tool == "describe_database_schema" and isinstance(tool_payload, dict):
+            sources = tool_payload.get("sources") if isinstance(tool_payload.get("sources"), dict) else {}
+            return (
+                f"Puedo consultar {len(sources)} fuentes de datos. "
+                "Te muestro tablas/campos disponibles y ejemplo de consulta para cada una."
+            )
+
+        if plan.tool == "query_database" and isinstance(tool_payload, dict):
+            detail = tool_payload.get("detail")
+            if detail:
+                return str(detail)
+            source = tool_payload.get("source", "datos")
+            meta = tool_payload.get("meta") or {}
+            rows_count = meta.get("rows_count", 0)
+            return f"Ejecuté una consulta sobre {source} y obtuve {rows_count} resultado(s)."
+
+        if plan.tool == "query_database_sql" and isinstance(tool_payload, dict):
+            detail = tool_payload.get("detail")
+            if detail:
+                return str(detail)
+            meta = tool_payload.get("meta") or {}
+            rows_count = meta.get("rows_count", 0)
+            return f"Ejecuté la sentencia SQL en modo lectura y obtuve {rows_count} resultado(s)."
+
+        if plan.tool == "get_completed_records_summary" and isinstance(tool_payload, dict):
+            detail = tool_payload.get("detail")
+            if detail:
+                return str(detail)
+            return (
+                f"El total acumulado de {tool_payload.get('total_records', 0)} registros completados "
+                f"es {tool_payload.get('total_value', '0.00')} {tool_payload.get('currency', '')}."
+            )
+
+        if plan.tool == "get_last_record_value" and isinstance(tool_payload, dict):
+            detail = tool_payload.get("detail")
+            if detail:
+                return str(detail)
+            last_record = tool_payload.get("last_record") or {}
+            valor = last_record.get("valor") or "N/D"
+            referencia = last_record.get("referencia") or "N/D"
+            job_ref = tool_payload.get("job_id")
+            return f"El ultimo registro del job #{job_ref} tiene valor {valor} y referencia {referencia}."
+
+        conversation = self._format_conversation(messages)
+        prompt = f"""
+Eres el asistente del dashboard de procesamiento.
+Responde en espanol, claro y breve.
+
+Contexto:
+- intent_detectado: {intent.name}
+- resumen_intencion: {intent.summary}
+- job_id_actual: {job_id if job_id is not None else 'null'}
+- errores_detectados: {errors}
+- herramienta_ejecutada: {plan.tool}
+
+Conversacion:
+{conversation}
+
+Resultado de la herramienta:
+{self._safe_json_dump(tool_payload)}
+
+Instrucciones:
+- Si la herramienta devolvio datos, resumelos de forma util.
+- Si no se uso herramienta, responde directamente a la pregunta.
+- No menciones JSON ni detalles internos de implementacion.
+- Si la herramienta ejecutada es get_job_status, resume estado, total de registros y nombre del archivo.
+- Si la herramienta ejecutada es get_job_logs, resume la cantidad de logs y el estado general.
+""".strip()
+
+        response = self._generate_text(prompt)
+        return response.strip() or "No pude generar una respuesta en este momento."
+
+    def _generate_text(self, prompt: str) -> str:
+        if self.provider == "anthropic":
+            return self._anthropic_generate(prompt)
+        return self._ollama_generate(prompt)
+
+    def _ollama_generate(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 256,
+            },
+        }
+        response = requests.post(settings.OLLAMA_URL, json=payload, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+        return str(data.get("response", ""))
+
+    def _anthropic_generate(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "max_tokens": 1024,
+            "temperature": 0.2,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        response = requests.post(
+            getattr(settings, "ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"),
+            json=payload,
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": getattr(settings, "ANTHROPIC_VERSION", "2023-06-01"),
+                "content-type": "application/json",
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("content") or []
+        if content and isinstance(content, list):
+            first_item = content[0] or {}
+            if isinstance(first_item, dict):
+                return str(first_item.get("text", ""))
+        return str(data.get("text", ""))
+
+    def _format_conversation(self, messages: list[dict[str, str]]) -> str:
+        lines: list[str] = []
+        for message in messages[-8:]:
+            role = message.get("role", "user")
+            content = (message.get("content") or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        return "\n".join(lines)
+
+    def _safe_json_dump(self, payload: Any) -> str:
+        try:
+            return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        except TypeError:
+            return json.dumps(str(payload), ensure_ascii=False, indent=2)
+
+
+class AssistantAgent:
+    def __init__(self) -> None:
+        self.model = settings.OLLAMA_MODEL
+        self.timeout = settings.OLLAMA_TIMEOUT
+        self.provider = "ollama"
+        self.api_key = ""
+        self.intent_agent = IntentAgent(self.model, self.timeout, self.provider, self.api_key)
+        self.planner_agent = PlanningAgent(self.model, self.timeout, self.provider, self.api_key)
+        self.tool_agent = ToolExecutionAgent()
+        self.response_agent = ResponseAgent(self.model, self.timeout, self.provider, self.api_key)
+
+    def _sync_runtime_model(self) -> None:
+        runtime = get_runtime_config()
+        model = runtime.llm_model or settings.OLLAMA_MODEL
+        timeout = runtime.request_timeout_seconds or settings.OLLAMA_TIMEOUT
+        provider = runtime.llm_provider or "ollama"
+        api_key = runtime.llm_api_key or ""
+
+        self.model = model
+        self.timeout = timeout
+        self.provider = provider
+        self.api_key = api_key
+
+        self.intent_agent.model = model
+        self.intent_agent.timeout = timeout
+        self.intent_agent.provider = provider
+        self.intent_agent.api_key = api_key
+        self.planner_agent.model = model
+        self.planner_agent.timeout = timeout
+        self.planner_agent.provider = provider
+        self.planner_agent.api_key = api_key
+        self.response_agent.model = model
+        self.response_agent.timeout = timeout
+        self.response_agent.provider = provider
+        self.response_agent.api_key = api_key
+
+    def answer(
+        self,
+        messages: list[dict[str, str]],
+        job_id: int | None = None,
+        errors: int = 0,
+        query_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._sync_runtime_model()
+        safe_context = query_context or {}
+        try:
+            intent = self.intent_agent.infer(
+                messages,
+                job_id=job_id,
+                errors=errors,
+                query_context=safe_context,
+            )
+            plan = self.planner_agent.plan(
+                intent,
+                messages,
+                job_id=job_id,
+                errors=errors,
+                query_context=safe_context,
+            )
+            tool_payload = self.tool_agent.execute(plan, job_id=job_id)
+            reply = self.response_agent.compose(
+                messages,
+                intent,
+                plan,
+                tool_payload,
+                job_id=job_id,
+                errors=errors,
+            )
+            next_context = safe_context
+            if plan.tool == "query_database" and isinstance(plan.arguments.get("query"), dict):
+                next_context = {"query": plan.arguments["query"]}
+            elif plan.tool == "query_database_sql" and isinstance(plan.arguments.get("sql"), str):
+                next_context = {
+                    "sql": plan.arguments.get("sql"),
+                    "limit": plan.arguments.get("limit", 100),
+                }
+            return {
+                "reply": reply,
+                "tool": plan.tool,
+                "data": tool_payload,
+                "query_context": next_context,
+            }
+        except Exception as exc:  # pragma: no cover - defensive runtime guard
+            logger.warning(
+                "Assistant agent unavailable during answer pipeline: %s: %s",
+                exc.__class__.__name__,
+                exc,
+            )
+            return {
+                "reply": (
+                    "El asistente no esta disponible temporalmente. "
+                    "Verifica la configuracion del proveedor LLM e intenta de nuevo."
+                ),
+                "tool": "none",
+                "data": {
+                    "detail": "assistant_unavailable",
+                    "error": str(exc),
+                },
+                "query_context": safe_context,
+            }
