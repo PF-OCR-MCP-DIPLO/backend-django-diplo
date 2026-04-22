@@ -1,5 +1,9 @@
+from decimal import Decimal
+
+from pydantic import ValidationError as PydanticValidationError
 from rest_framework import serializers
 
+from apps.extraction.schemas import ConsignacionBasica
 from apps.processing.models import (
     ExtractedDeposit,
     ExtractionLog,
@@ -206,3 +210,38 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
+
+
+class DepositCorrectionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    fecha_consignacion = serializers.CharField(allow_blank=True, allow_null=True)
+    hora_consignacion = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    referencia = serializers.CharField()
+    valor = serializers.CharField()
+
+    def validate(self, attrs):
+        try:
+            normalized = ConsignacionBasica(
+                fecha_consignacion=attrs.get("fecha_consignacion"),
+                hora_consignacion=attrs.get("hora_consignacion"),
+                referencia=attrs["referencia"],
+                valor=attrs["valor"],
+            )
+        except PydanticValidationError as error:
+            details = {}
+            for entry in error.errors():
+                field = str(entry["loc"][0])
+                details.setdefault(field, []).append(entry["msg"])
+            raise serializers.ValidationError(details) from error
+
+        attrs["fecha_consignacion"] = normalized.fecha_consignacion or ""
+        attrs["hora_consignacion"] = normalized.hora_consignacion or ""
+        attrs["referencia"] = normalized.referencia
+        attrs["valor"] = Decimal(str(normalized.valor))
+        return attrs
+
+
+class BulkDepositCorrectionSerializer(serializers.Serializer):
+    items = DepositCorrectionSerializer(many=True, allow_empty=False)

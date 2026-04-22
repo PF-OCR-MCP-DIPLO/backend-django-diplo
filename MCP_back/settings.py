@@ -1,14 +1,24 @@
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-!(4)@fr^)^m&0plk=%+-d4jj-e79hgt(gal)lh^7-plzsd))6b",
-)
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",")
+DEFAULT_SECRET_KEY = "django-insecure-dev-only-change-me"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEFAULT_SECRET_KEY)
+if not DEBUG and SECRET_KEY == DEFAULT_SECRET_KEY:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must be configured when DJANGO_DEBUG=0."
+    )
+
+default_allowed_hosts = "localhost,127.0.0.1"
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", default_allowed_hosts).split(",")
+    if host.strip()
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -86,6 +96,7 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+PROCESS_JOBS_ASYNC = os.environ.get("PROCESS_JOBS_ASYNC", "1") == "1"
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -111,6 +122,8 @@ REST_FRAMEWORK = {
 
 # Minimal auth: enable by setting API_KEY env var. If empty, endpoints remain open.
 API_KEY = os.environ.get("API_KEY", "")
+if not DEBUG and not API_KEY:
+    raise ImproperlyConfigured("API_KEY must be configured when DJANGO_DEBUG=0.")
 
 # Enables deterministic stub OCR/LLM providers for E2E and local demos.
 STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"

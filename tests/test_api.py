@@ -111,6 +111,8 @@ def build_docx_without_images():
     buffer.seek(0)
     return buffer.getvalue()
 
+
+@override_settings(PROCESS_JOBS_ASYNC=False)
 class DocumentApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -339,9 +341,19 @@ class DocumentApiTests(TestCase):
         self.assertEqual(export_response.json()["error"]["code"], "forbidden")
 
         # With key
-        process_ok = self.client.post(
-            f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
-        )
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[],
+            ),
+        ):
+            process_ok = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
         self.assertEqual(process_ok.status_code, 200)
 
     def test_settings_endpoints(self):
@@ -499,3 +511,122 @@ class DocumentApiTests(TestCase):
         logs_response = self.client.get(f"/api/jobs/{job_id}/logs/")
         self.assertEqual(logs_response.status_code, 200)
         self.assertGreaterEqual(len(logs_response.json()), 3)
+
+    @override_settings(API_KEY="dev")
+    def test_bulk_deposit_corrections_persist_and_refresh_detail(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        job_id = upload_response.json()["id"]
+
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                side_effect=[
+                    [
+                        {
+                            "fecha_consignacion": "01/04/2026",
+                            "hora_consignacion": "10:00",
+                            "referencia": "REF001",
+                            "valor": 150000.0,
+                            "archivo_origen": "image1.png",
+                        }
+                    ],
+                    [],
+                ],
+            ),
+        ):
+            process_response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+
+        self.assertEqual(process_response.status_code, 200)
+        deposit_id = process_response.json()["source_images"][0]["deposits"][0]["id"]
+        correction_response = self.client.patch(
+            f"/api/jobs/{job_id}/deposits/",
+            {
+                "items": [
+                    {
+                        "id": deposit_id,
+                        "fecha_consignacion": "22/04/2026",
+                        "hora_consignacion": "15:45",
+                        "referencia": "REF999",
+                        "valor": "175000",
+                    }
+                ]
+            },
+            format="json",
+            HTTP_X_API_KEY="dev",
+        )
+
+        self.assertEqual(correction_response.status_code, 200)
+        corrected = correction_response.json()["source_images"][0]["deposits"][0]
+        self.assertEqual(corrected["fecha_consignacion"], "22/04/2026")
+        self.assertEqual(corrected["hora_consignacion"], "15:45")
+        self.assertEqual(corrected["referencia"], "REF999")
+        self.assertEqual(corrected["valor"], "175000.00")
+        self.assertEqual(corrected["observations"], [])
+
+        detail_response = self.client.get(f"/api/jobs/{job_id}/")
+        refreshed = detail_response.json()["source_images"][0]["deposits"][0]
+        self.assertEqual(refreshed["referencia"], "REF999")
+
+    @override_settings(API_KEY="dev")
+    def test_bulk_deposit_corrections_require_api_key(self):
+        process_run = ProcessRun.objects.create(
+            original_filename="test.docx", status=ProcessRun.Status.COMPLETED
+        )
+        response = self.client.patch(
+            f"/api/jobs/{process_run.pk}/deposits/",
+            {
+                "items": [
+                    {
+                        "id": 1,
+                        "fecha_consignacion": "22/04/2026",
+                        "hora_consignacion": "15:45",
+                        "referencia": "REF999",
+                        "valor": "175000",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(PROCESS_JOBS_ASYNC=True, API_KEY="dev")
+    def test_process_endpoint_returns_accepted_when_async_enabled(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+
+        def fake_start(job):
+            ProcessRun.objects.filter(pk=job.pk).update(
+                status=ProcessRun.Status.PROCESSING
+            )
+            return ProcessRun.objects.get(pk=job.pk)
+
+        with patch(
+            "apps.api.views.start_job_processing",
+            side_effect=fake_start,
+        ):
+            response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["status"], "processing")
