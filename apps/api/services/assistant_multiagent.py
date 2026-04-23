@@ -43,6 +43,7 @@ _ALLOWED_TOOLS = {
     "get_last_record_value",
     "get_completed_records_summary",
     "query_database",
+    "crud_database",
     "get_processing_settings",
     "get_processing_settings_options",
     "update_processing_settings",
@@ -77,6 +78,22 @@ class AssistantPlan:
 
 
 class IntentAgent:
+    _MONTHS = {
+        "enero": 1,
+        "febrero": 2,
+        "marzo": 3,
+        "abril": 4,
+        "mayo": 5,
+        "junio": 6,
+        "julio": 7,
+        "agosto": 8,
+        "septiembre": 9,
+        "setiembre": 9,
+        "octubre": 10,
+        "noviembre": 11,
+        "diciembre": 12,
+    }
+
     def __init__(self, model: str, timeout: int, provider: str, api_key: str = "") -> None:
         self.model = model
         self.timeout = timeout
@@ -116,13 +133,21 @@ class IntentAgent:
         job_id: int | None,
         query_context: dict[str, Any],
     ) -> AssistantIntent | None:
+        crud_intent = self._infer_crud_intent(text)
+        if crud_intent is not None:
+            return crud_intent
+
+        transactions_intent = self._infer_transactions_query_intent(text)
+        if transactions_intent is not None:
+            return transactions_intent
+
         if self._matches_followup_query(text) and isinstance(query_context.get("query"), dict):
             return AssistantIntent(
-                name="db_query",
+                name="followup_not_supported",
                 confidence=0.9,
-                tool_hint="query_database",
-                arguments={"query": {}},
-                summary="Refinamiento de una consulta anterior",
+                tool_hint="none",
+                arguments={},
+                summary="Solicitud ambigua dependiente del contexto previo",
             )
 
         if self._matches_completed_records_total(text):
@@ -267,6 +292,558 @@ class IntentAgent:
                 return number
         return 5
 
+    def _infer_crud_intent(self, text: str) -> AssistantIntent | None:
+        if not any(term in text for term in ("transaccion", "transacción", "registro", "deposito", "depósito", "bd", "base de datos")):
+            return None
+
+        if any(term in text for term in ("crear", "crea", "inserta", "agrega", "registrar")):
+            values: dict[str, Any] = {}
+            reference = self._extract_reference_filter(text)
+            if reference and isinstance(reference.get("value"), str):
+                values["referencia"] = reference["value"]
+            exact_amount = self._extract_transaction_amount_filters(text)
+            for item in exact_amount:
+                if item.get("op") == "eq":
+                    values["valor"] = item.get("value")
+
+            process_run_match = re.search(r"(?:job|process_run(?:_id)?|proceso)\s*#?\s*(\d+)", text)
+            if process_run_match:
+                values["process_run_id"] = int(process_run_match.group(1))
+
+            source_image_match = re.search(r"(?:imagen|image|source_image(?:_id)?)\s*#?\s*(\d+)", text)
+            if source_image_match:
+                values["source_image_id"] = int(source_image_match.group(1))
+
+            sequence_match = re.search(r"(?:secuencia|sequence|indice|índice)\s*#?\s*(\d+)", text)
+            if sequence_match:
+                values["sequence_index"] = int(sequence_match.group(1))
+
+            return AssistantIntent(
+                name="crud_create",
+                confidence=0.9,
+                tool_hint="crud_database",
+                arguments={
+                    "operation": "create",
+                    "source": "deposits",
+                    "values": values,
+                },
+                summary="Solicitud de creacion de registro",
+            )
+
+        if any(term in text for term in ("actualiza", "actualizar", "editar", "modificar", "cambiar")):
+            filters: list[dict[str, Any]] = []
+            values: dict[str, Any] = {}
+
+            id_match = re.search(r"(?:id\s*#?|id:)\s*(\d+)", text)
+            if id_match:
+                filters.append({"field": "id", "op": "eq", "value": int(id_match.group(1))})
+
+            ref_filter = self._extract_reference_filter(text)
+            if ref_filter is not None:
+                filters.append(ref_filter)
+
+            amount_match = re.search(r"(?:a|por)\s*\$\s*([\d\.,]+)", text)
+            if amount_match:
+                parsed_amount = self._to_numeric_amount(amount_match.group(1))
+                if parsed_amount is not None:
+                    values["valor"] = parsed_amount
+
+            return AssistantIntent(
+                name="crud_update",
+                confidence=0.9,
+                tool_hint="crud_database",
+                arguments={
+                    "operation": "update",
+                    "source": "deposits",
+                    "filters": filters,
+                    "values": values,
+                },
+                summary="Solicitud de actualizacion de registro",
+            )
+
+        if any(term in text for term in ("elimina", "eliminar", "borra", "borrar")):
+            filters: list[dict[str, Any]] = []
+            id_match = re.search(r"(?:id\s*#?|id:)\s*(\d+)", text)
+            if id_match:
+                filters.append({"field": "id", "op": "eq", "value": int(id_match.group(1))})
+
+            ref_filter = self._extract_reference_filter(text)
+            if ref_filter is not None:
+                filters.append(ref_filter)
+
+            return AssistantIntent(
+                name="crud_delete",
+                confidence=0.9,
+                tool_hint="crud_database",
+                arguments={
+                    "operation": "delete",
+                    "source": "deposits",
+                    "filters": filters,
+                },
+                summary="Solicitud de eliminacion de registro",
+            )
+
+        return None
+
+    def _infer_transactions_query_intent(self, text: str) -> AssistantIntent | None:
+        if not self._looks_like_transaction_query(text):
+            return None
+
+        query: dict[str, Any] = {
+            "source": "deposits",
+            "select": [
+                "id",
+                "process_run_id",
+                "referencia",
+                "valor",
+                "fecha_consignacion",
+                "hora_consignacion",
+                "created_at",
+            ],
+            "filters": [],
+            "order_by": [{"field": "created_at", "direction": "desc"}],
+            "limit": 30,
+        }
+
+        date_filters = self._extract_transaction_date_filters(text)
+        if date_filters:
+            query["filters"].extend(date_filters)
+
+        amount_filters = self._extract_transaction_amount_filters(text)
+        if amount_filters:
+            query["filters"].extend(amount_filters)
+
+        reference_filter = self._extract_reference_filter(text)
+        if reference_filter is not None:
+            query["filters"].append(reference_filter)
+
+        if self._is_group_by_day_request(text):
+            query["group_by"] = ["fecha_consignacion"]
+            query["aggregations"] = [
+                {"type": "count", "field": "id", "as": "total_transacciones"},
+                {"type": "sum", "field": "valor", "as": "total_valor"},
+            ]
+            query["order_by"] = [{"field": "fecha_consignacion", "direction": "desc"}]
+            query["limit"] = 60
+
+        if self._is_total_sum_request(text):
+            query["select"] = []
+            query["aggregations"] = [{"type": "sum", "field": "valor", "as": "total_valor"}]
+            query.pop("order_by", None)
+            query["limit"] = 1
+
+        if self._is_average_request(text):
+            query["select"] = []
+            query["aggregations"] = [{"type": "avg", "field": "valor", "as": "promedio_valor"}]
+            query.pop("order_by", None)
+            query["limit"] = 1
+
+        if self._is_count_request(text):
+            query["select"] = []
+            query["aggregations"] = [{"type": "count", "field": "id", "as": "total_transacciones"}]
+            query.pop("order_by", None)
+            query["limit"] = 1
+
+        if self._is_references_only_request(text):
+            query["select"] = ["referencia", "valor", "fecha_consignacion", "created_at"]
+
+        if self._is_sort_by_amount_desc_request(text):
+            query["order_by"] = [{"field": "valor", "direction": "desc"}]
+        elif self._is_sort_by_amount_asc_request(text):
+            query["order_by"] = [{"field": "valor", "direction": "asc"}]
+        elif self._is_sort_by_date_desc_request(text):
+            query["order_by"] = [{"field": "created_at", "direction": "desc"}]
+
+        if "ultima" in text or "última" in text or "ultimo" in text or "último" in text:
+            query["order_by"] = [{"field": "created_at", "direction": "desc"}]
+
+        if self._is_all_transactions_request(text):
+            query["limit"] = 200
+
+        if self._is_top_transactions_request(text):
+            query["order_by"] = [{"field": "valor", "direction": "desc"}]
+            query["limit"] = self._extract_limit(text)
+        elif self._has_explicit_limit_request(text):
+            query["limit"] = self._extract_limit(text)
+
+        return AssistantIntent(
+            name="db_query",
+            confidence=0.95,
+            tool_hint="query_database",
+            arguments={"query": query},
+            summary="Consulta transaccional interpretada en lenguaje natural",
+        )
+
+    def _looks_like_transaction_query(self, text: str) -> bool:
+        transaction_terms = (
+            "transaccion",
+            "transacciones",
+            "transferencia",
+            "transferencias",
+            "movimiento",
+            "movimientos",
+            "referencia",
+            "referencias",
+            "cuanto movi",
+            "cuánto moví",
+            "lo ultimo que hice",
+            "lo último que hice",
+        )
+        action_terms = (
+            "dame",
+            "muestr",
+            "lista",
+            "busca",
+            "encuentra",
+            "cuanto",
+            "cuánto",
+            "promedio",
+            "suma",
+            "cantidad",
+            "ordena",
+            "agrupa",
+            "ultim",
+            "entre",
+            "mayor",
+            "menor",
+            "esta semana",
+            "este mes",
+            "ultimo mes",
+            "último mes",
+            "este año",
+        )
+        return any(term in text for term in transaction_terms) or (
+            any(term in text for term in action_terms)
+            and any(token in text for token in ("$", "mes", "semana", "fecha", "abril", "enero", "marzo"))
+        )
+
+    def _has_explicit_limit_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "ultimas",
+                "últimas",
+                "ultimos",
+                "últimos",
+                "top",
+                "primeras",
+                "primeros",
+            )
+        ) and bool(re.search(r"\b\d{1,3}\b", text))
+
+    def _is_all_transactions_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "todas las transacciones",
+                "todos los movimientos",
+                "todas las transferencias",
+            )
+        )
+
+    def _is_top_transactions_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "mas altas",
+                "más altas",
+                "mas grandes",
+                "más grandes",
+                "top",
+            )
+        )
+
+    def _is_references_only_request(self, text: str) -> bool:
+        return "referencia" in text and any(
+            phrase in text
+            for phrase in (
+                "dame las referencias",
+                "muestrame las referencias",
+                "muéstrame las referencias",
+                "referencias entre",
+            )
+        )
+
+    def _is_total_sum_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "cuanto es la cuenta en total",
+                "cuánto es la cuenta en total",
+                "suma de transacciones",
+                "suma total",
+                "cuanto movi",
+                "cuánto moví",
+                "cuanto movi en estos dias",
+                "cuánto moví en estos días",
+            )
+        )
+
+    def _is_average_request(self, text: str) -> bool:
+        return "promedio" in text
+
+    def _is_count_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "cantidad de transacciones",
+                "cuantas transacciones",
+                "cuántas transacciones",
+                "numero de transacciones",
+                "número de transacciones",
+            )
+        )
+
+    def _is_group_by_day_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "agrupalas por dia",
+                "agrúpalas por día",
+                "agrupar por dia",
+                "agrupar por día",
+            )
+        )
+
+    def _is_sort_by_amount_desc_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "de mayor a menor valor",
+                "mayor a menor valor",
+                "ordenalas de mayor a menor",
+                "ordénalas de mayor a menor",
+            )
+        )
+
+    def _is_sort_by_amount_asc_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "de menor a mayor valor",
+                "menor a mayor valor",
+            )
+        )
+
+    def _is_sort_by_date_desc_request(self, text: str) -> bool:
+        return any(
+            phrase in text
+            for phrase in (
+                "fecha descendente",
+                "por fecha descendente",
+                "mas recientes",
+                "más recientes",
+                "lo ultimo que hice",
+                "lo último que hice",
+            )
+        )
+
+    def _extract_reference_filter(self, text: str) -> dict[str, Any] | None:
+        pattern = re.search(r"referencia\s*[:#]?\s*([a-z0-9\-]{4,})", text)
+        if not pattern:
+            return None
+        reference = pattern.group(1).strip()
+        return {"field": "referencia", "op": "icontains", "value": reference}
+
+    def _extract_transaction_amount_filters(self, text: str) -> list[dict[str, Any]]:
+        filters: list[dict[str, Any]] = []
+
+        for keyword in ("mayores a", "mayor a", "mas de", "más de", "superiores a"):
+            amount = self._extract_amount_after_keyword(text, keyword)
+            if amount is not None:
+                filters.append({"field": "valor", "op": "gt", "value": amount})
+                break
+
+        for keyword in ("menores a", "menor a", "menos de", "inferiores a"):
+            amount = self._extract_amount_after_keyword(text, keyword)
+            if amount is not None:
+                filters.append({"field": "valor", "op": "lt", "value": amount})
+                break
+
+        near_match = re.search(r"(?:cercan[ao]s?\s+a|cerca\s+de)\s*\$?\s*([\d\.,]+)", text)
+        if near_match:
+            amount = self._to_numeric_amount(near_match.group(1))
+            if amount is not None:
+                delta = max(1, int(amount * 0.1))
+                filters.append(
+                    {
+                        "field": "valor",
+                        "op": "between",
+                        "value": [max(amount - delta, 0), amount + delta],
+                    }
+                )
+
+        exact_match = re.search(r"por\s*\$\s*([\d\.,]+)", text)
+        if exact_match:
+            amount = self._to_numeric_amount(exact_match.group(1))
+            if amount is not None:
+                filters.append({"field": "valor", "op": "eq", "value": amount})
+
+        return filters
+
+    def _extract_amount_after_keyword(self, text: str, keyword: str) -> int | None:
+        pattern = re.search(rf"{re.escape(keyword)}\s*\$?\s*([\d\.,]+)", text)
+        if not pattern:
+            return None
+        return self._to_numeric_amount(pattern.group(1))
+
+    def _to_numeric_amount(self, raw_value: str) -> int | None:
+        digits = re.sub(r"[^\d]", "", raw_value or "")
+        if not digits:
+            return None
+        try:
+            return int(digits)
+        except ValueError:
+            return None
+
+    def _extract_transaction_date_filters(self, text: str) -> list[dict[str, Any]]:
+        today = timezone.localdate()
+        filters: list[dict[str, Any]] = []
+
+        range_dates = self._extract_between_dates(text)
+        if range_dates is not None:
+            start_date, end_date = range_dates
+            filters.extend(
+                [
+                    {"field": "created_at", "op": "date_gte", "value": start_date.isoformat()},
+                    {"field": "created_at", "op": "date_lte", "value": end_date.isoformat()},
+                ]
+            )
+            return filters
+
+        exact_date = self._extract_exact_spanish_date(text)
+        if exact_date is not None:
+            filters.append({"field": "created_at", "op": "date_eq", "value": exact_date.isoformat()})
+            return filters
+
+        if "ultimo mes" in text or "último mes" in text:
+            filters.append({"field": "created_at", "op": "in_last_days", "value": 30})
+            return filters
+
+        if "esta semana" in text or "esta semana" in text:
+            filters.append({"field": "created_at", "op": "in_last_days", "value": 7})
+            return filters
+
+        if "estos dias" in text or "estos días" in text:
+            filters.append({"field": "created_at", "op": "in_last_days", "value": 7})
+            return filters
+
+        if "este mes" in text:
+            start = today.replace(day=1)
+            filters.extend(
+                [
+                    {"field": "created_at", "op": "date_gte", "value": start.isoformat()},
+                    {"field": "created_at", "op": "date_lte", "value": today.isoformat()},
+                ]
+            )
+            return filters
+
+        if "este año" in text or "este ano" in text:
+            start = today.replace(month=1, day=1)
+            filters.extend(
+                [
+                    {"field": "created_at", "op": "date_gte", "value": start.isoformat()},
+                    {"field": "created_at", "op": "date_lte", "value": today.isoformat()},
+                ]
+            )
+            return filters
+
+        month_name = self._extract_month_name(text)
+        if month_name is not None:
+            year = self._extract_year(text) or today.year
+            month = self._MONTHS[month_name]
+            start = date(year, month, 1)
+            if month == 12:
+                end = date(year, 12, 31)
+            else:
+                end = date(year, month + 1, 1) - timedelta(days=1)
+            filters.extend(
+                [
+                    {"field": "created_at", "op": "date_gte", "value": start.isoformat()},
+                    {"field": "created_at", "op": "date_lte", "value": end.isoformat()},
+                ]
+            )
+        return filters
+
+    def _extract_exact_spanish_date(self, text: str) -> date | None:
+        match = re.search(
+            r"\b(?:del|de)?\s*(\d{1,2})\s+de\s+"
+            r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+            r"(?:\s+de\s+(\d{4}))?\b",
+            text,
+        )
+        if not match:
+            return None
+
+        day = int(match.group(1))
+        month_name = match.group(2)
+        year = int(match.group(3)) if match.group(3) else timezone.localdate().year
+        month = self._MONTHS.get(month_name)
+        if month is None:
+            return None
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    def _extract_between_dates(self, text: str) -> tuple[date, date] | None:
+        explicit_days = re.search(
+            r"entre\s+(?:el\s+)?(\d{1,2})\s+de\s+"
+            r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+            r"(?:\s+de\s+(\d{4}))?\s+y\s+(?:el\s+)?(\d{1,2})\s+de\s+"
+            r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+            r"(?:\s+de\s+(\d{4}))?",
+            text,
+        )
+        if explicit_days:
+            start_year = int(explicit_days.group(3)) if explicit_days.group(3) else timezone.localdate().year
+            end_year = int(explicit_days.group(6)) if explicit_days.group(6) else start_year
+            start_month = self._MONTHS[explicit_days.group(2)]
+            end_month = self._MONTHS[explicit_days.group(5)]
+            try:
+                start = date(start_year, start_month, int(explicit_days.group(1)))
+                end = date(end_year, end_month, int(explicit_days.group(4)))
+                return (start, end) if start <= end else (end, start)
+            except ValueError:
+                return None
+
+        months_range = re.search(
+            r"entre\s+"
+            r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+            r"\s+y\s+"
+            r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+            r"(?:\s+de\s+(\d{4}))?",
+            text,
+        )
+        if months_range:
+            year = int(months_range.group(3)) if months_range.group(3) else timezone.localdate().year
+            start_month = self._MONTHS[months_range.group(1)]
+            end_month = self._MONTHS[months_range.group(2)]
+            start = date(year, min(start_month, end_month), 1)
+            last_month = max(start_month, end_month)
+            if last_month == 12:
+                end = date(year, 12, 31)
+            else:
+                end = date(year, last_month + 1, 1) - timedelta(days=1)
+            return start, end
+
+        return None
+
+    def _extract_month_name(self, text: str) -> str | None:
+        for month_name in self._MONTHS:
+            if re.search(rf"\b{month_name}\b", text):
+                return month_name
+        return None
+
+    def _extract_year(self, text: str) -> int | None:
+        match = re.search(r"\b(20\d{2})\b", text)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
     def _matches_completed_records_total(self, text: str) -> bool:
         total_terms = (
             "total de todos los registros completados",
@@ -367,6 +944,9 @@ Clasifica el ultimo mensaje del usuario en uno de estos intentos:
 - db_schema
 - sql_query
 - db_query
+- crud_create
+- crud_update
+- crud_delete
 - generic_chat
 
 Responde SOLO con JSON valido y nada mas usando este esquema:
@@ -520,8 +1100,11 @@ class PlanningAgent:
                 arguments["job_id"] = job_id
             if intent.tool_hint == "query_database":
                 previous_query = safe_context.get("query") if isinstance(safe_context.get("query"), dict) else {}
-                merged_query = self._merge_query_context(previous_query, arguments.get("query") or {})
-                arguments["query"] = merged_query
+                query_candidate = arguments.get("query") or {}
+                if self._should_merge_query_context(query_candidate):
+                    arguments["query"] = self._merge_query_context(previous_query, query_candidate)
+                else:
+                    arguments["query"] = query_candidate
             return AssistantPlan(
                 tool=intent.tool_hint,
                 arguments=arguments,
@@ -560,6 +1143,7 @@ Herramientas disponibles:
 - get_last_record_value
 - get_completed_records_summary
 - query_database
+- crud_database
 - get_processing_settings
 - get_processing_settings_options
 - update_processing_settings
@@ -568,7 +1152,7 @@ Herramientas disponibles:
 
 Responde SOLO con JSON valido y nada mas usando este esquema:
 {{
-    "tool": "none|health_check|describe_database_schema|query_database_sql|list_jobs|get_job_status|get_job_logs|get_last_record_value|get_completed_records_summary|query_database|get_processing_settings|get_processing_settings_options|update_processing_settings|process_job|export_job_excel",
+    "tool": "none|health_check|describe_database_schema|query_database_sql|list_jobs|get_job_status|get_job_logs|get_last_record_value|get_completed_records_summary|query_database|crud_database|get_processing_settings|get_processing_settings_options|update_processing_settings|process_job|export_job_excel",
   "arguments": {{ ... }}
 }}
 
@@ -580,6 +1164,7 @@ Reglas:
 - Si la intencion es db_schema, usa describe_database_schema.
 - Si la intencion es sql_query, usa query_database_sql con arguments.sql.
 - Si la intencion es db_query, usa query_database con un objeto `query` en arguments.
+- Si la intencion es crud_create|crud_update|crud_delete, usa crud_database.
 - Si la intencion es job_status, usa get_job_status.
 - Si la intencion es job_logs, usa get_job_logs.
 - {sql_mode_rules}
@@ -622,6 +1207,7 @@ Conversacion:
             "get_job_logs",
             "get_last_record_value",
             "query_database",
+            "crud_database",
             "process_job",
             "export_job_excel",
         } and "job_id" not in arguments and job_id is not None:
@@ -629,7 +1215,11 @@ Conversacion:
 
         if tool == "query_database":
             previous_query = safe_context.get("query") if isinstance(safe_context.get("query"), dict) else {}
-            arguments["query"] = self._merge_query_context(previous_query, arguments.get("query") or {})
+            query_candidate = arguments.get("query") or {}
+            if self._should_merge_query_context(query_candidate):
+                arguments["query"] = self._merge_query_context(previous_query, query_candidate)
+            else:
+                arguments["query"] = query_candidate
 
         return AssistantPlan(
             tool=tool,
@@ -657,6 +1247,12 @@ Conversacion:
             merged["select"] = ["id", "created_at"]
 
         return merged
+
+    def _should_merge_query_context(self, query_candidate: dict[str, Any]) -> bool:
+        if not isinstance(query_candidate, dict):
+            return True
+        # Merge only when current query is empty, i.e., explicit follow-up refinement.
+        return len(query_candidate) == 0
 
     def _generate_text(self, prompt: str) -> str:
         if self.provider == "anthropic":
@@ -864,6 +1460,9 @@ class ToolExecutionAgent:
         if plan.tool == "query_database":
             return self._execute_query_database(plan.arguments.get("query"))
 
+        if plan.tool == "crud_database":
+            return self._execute_crud_database(plan.arguments)
+
         if plan.tool == "list_jobs":
             jobs = ProcessRun.objects.order_by("-created_at")[:5]
             return ProcessRunListSerializer(jobs, many=True, context={"request": None}).data
@@ -983,6 +1582,166 @@ class ToolExecutionAgent:
                 return {"detail": str(exc)}
 
         return {"detail": f"Unsupported tool: {plan.tool}"}
+
+    def _execute_crud_database(self, arguments: Any) -> dict[str, Any]:
+        if not isinstance(arguments, dict):
+            return {"detail": "crud_database requiere arguments como objeto."}
+
+        operation = str(arguments.get("operation") or "").strip().lower()
+        source = str(arguments.get("source") or "").strip()
+        if operation not in {"create", "read", "update", "delete"}:
+            return {"detail": "operation invalida. Usa create, read, update o delete."}
+        if source not in _QUERY_SOURCES:
+            return {
+                "detail": "source invalido. Usa process_runs, deposits, source_images o logs.",
+                "available_sources": list(_QUERY_SOURCES.keys()),
+            }
+
+        model = _QUERY_SOURCES[source]["model"]
+        allowed_fields = _QUERY_SOURCES[source]["fields"]
+
+        if operation == "read":
+            query = arguments.get("query")
+            if isinstance(query, dict):
+                return self._execute_query_database(query)
+            query_from_filters = {
+                "source": source,
+                "select": [field for field in ("id", "created_at") if field in allowed_fields],
+                "filters": arguments.get("filters") if isinstance(arguments.get("filters"), list) else [],
+                "order_by": arguments.get("order_by") if isinstance(arguments.get("order_by"), list) else [],
+                "limit": arguments.get("limit", 30),
+            }
+            return self._execute_query_database(query_from_filters)
+
+        if operation == "create":
+            values = arguments.get("values") if isinstance(arguments.get("values"), dict) else {}
+            if not values:
+                return {"detail": "create requiere arguments.values con campos a crear."}
+            writable = self._model_writable_fields(model)
+            payload = {k: v for k, v in values.items() if k in writable}
+            if not payload:
+                return {"detail": "No hay campos validos para crear el registro."}
+            try:
+                instance = model.objects.create(**payload)
+                return {
+                    "operation": "create",
+                    "source": source,
+                    "created_id": instance.pk,
+                    "data": self._serialize_model_instance(instance, allowed_fields),
+                }
+            except Exception as exc:
+                return {"detail": "No fue posible crear el registro.", "meta": {"error": exc.__class__.__name__, "message": str(exc)}}
+
+        queryset = model.objects.all()
+        filters = arguments.get("filters") if isinstance(arguments.get("filters"), list) else []
+        filtered, warnings = self._apply_crud_filters(queryset, filters, allowed_fields)
+
+        if operation == "update":
+            values = arguments.get("values") if isinstance(arguments.get("values"), dict) else {}
+            if not values:
+                return {"detail": "update requiere arguments.values con campos a actualizar."}
+            writable = self._model_writable_fields(model)
+            payload = {k: v for k, v in values.items() if k in writable}
+            if not payload:
+                return {"detail": "No hay campos validos para actualizar el registro."}
+            try:
+                updated_count = filtered.update(**payload)
+                return {
+                    "operation": "update",
+                    "source": source,
+                    "updated_count": int(updated_count),
+                    "warnings": warnings,
+                }
+            except Exception as exc:
+                return {"detail": "No fue posible actualizar registros.", "meta": {"error": exc.__class__.__name__, "message": str(exc)}}
+
+        try:
+            deleted_count, _ = filtered.delete()
+            return {
+                "operation": "delete",
+                "source": source,
+                "deleted_count": int(deleted_count),
+                "warnings": warnings,
+            }
+        except Exception as exc:
+            return {"detail": "No fue posible eliminar registros.", "meta": {"error": exc.__class__.__name__, "message": str(exc)}}
+
+    def _model_writable_fields(self, model: Any) -> set[str]:
+        blocked = {"id", "created_at", "updated_at"}
+        writable: set[str] = set()
+        for field in model._meta.concrete_fields:
+            if field.auto_created:
+                continue
+            if field.name in blocked:
+                continue
+            writable.add(field.name)
+            if hasattr(field, "attname") and field.attname not in blocked:
+                writable.add(field.attname)
+        return writable
+
+    def _serialize_model_instance(self, instance: Any, allowed_fields: set[str]) -> dict[str, Any]:
+        payload: dict[str, Any] = {"id": instance.pk}
+        for field in sorted(allowed_fields):
+            if "__" in field:
+                continue
+            try:
+                payload[field] = _to_json_safe(getattr(instance, field))
+            except Exception:
+                continue
+        return payload
+
+    def _apply_crud_filters(self, queryset: Any, filters: list[dict[str, Any]], allowed_fields: set[str]) -> tuple[Any, list[str]]:
+        warnings: list[str] = []
+        for item in filters:
+            if not isinstance(item, dict):
+                continue
+            field = str(item.get("field") or "").strip()
+            op = str(item.get("op") or "eq").strip()
+            value = item.get("value")
+            if field not in allowed_fields:
+                warnings.append(f"Filtro omitido: campo no permitido '{field}'.")
+                continue
+            try:
+                if op == "eq":
+                    queryset = queryset.filter(**{field: value})
+                elif op == "ne":
+                    queryset = queryset.exclude(**{field: value})
+                elif op == "in" and isinstance(value, list):
+                    queryset = queryset.filter(**{f"{field}__in": value})
+                elif op == "gt":
+                    queryset = queryset.filter(**{f"{field}__gt": value})
+                elif op == "gte":
+                    queryset = queryset.filter(**{f"{field}__gte": value})
+                elif op == "lt":
+                    queryset = queryset.filter(**{f"{field}__lt": value})
+                elif op == "lte":
+                    queryset = queryset.filter(**{f"{field}__lte": value})
+                elif op == "contains" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__contains": value})
+                elif op == "icontains" and isinstance(value, str):
+                    queryset = queryset.filter(**{f"{field}__icontains": value})
+                elif op == "isnull":
+                    queryset = queryset.filter(**{f"{field}__isnull": bool(value)})
+                elif op in {"date_eq", "date_gte", "date_lte"}:
+                    parsed = self._parse_date_value(value)
+                    if parsed is None:
+                        warnings.append(f"Filtro omitido: fecha invalida para '{field}'.")
+                        continue
+                    lookup = {
+                        "date_eq": f"{field}__date",
+                        "date_gte": f"{field}__date__gte",
+                        "date_lte": f"{field}__date__lte",
+                    }[op]
+                    queryset = queryset.filter(**{lookup: parsed})
+                elif op == "in_last_days":
+                    days = int(value)
+                    cutoff = timezone.now() - timedelta(days=max(0, min(days, 3650)))
+                    queryset = queryset.filter(**{f"{field}__gte": cutoff})
+                else:
+                    warnings.append(f"Filtro omitido: operador no soportado '{op}'.")
+            except Exception as exc:
+                warnings.append(f"Filtro omitido por error '{exc.__class__.__name__}' en '{field}'.")
+        return queryset, warnings
 
     def _execute_query_database(self, query: Any) -> dict[str, Any]:
         if not isinstance(query, dict):
@@ -1353,6 +2112,25 @@ class ResponseAgent:
         job_id: int | None,
         errors: int,
     ) -> str:
+        if intent.name == "followup_not_supported":
+            return (
+                "No puedo hacer eso con esa instruccion ambigua. "
+                "Por favor especifica de nuevo la consulta completa."
+            )
+
+        if plan.tool == "crud_database" and isinstance(tool_payload, dict):
+            if tool_payload.get("detail"):
+                return str(tool_payload.get("detail"))
+            operation = tool_payload.get("operation")
+            if operation == "create":
+                return f"Registro creado correctamente con id {tool_payload.get('created_id')}."
+            if operation == "update":
+                return f"Actualicé {tool_payload.get('updated_count', 0)} registro(s)."
+            if operation == "delete":
+                return f"Eliminé {tool_payload.get('deleted_count', 0)} registro(s)."
+            if operation == "read":
+                return "Consulta CRUD de lectura ejecutada correctamente."
+
         if plan.tool == "list_jobs" and isinstance(tool_payload, list):
             return f"Encontré {len(tool_payload)} jobs recientes. Te los muestro en tarjetas en la interfaz."
 

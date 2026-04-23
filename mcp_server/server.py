@@ -155,6 +155,29 @@ def query_database_sql(sql: str, limit: int = 100) -> str:
 
 
 @mcp.tool()
+def crud_database(
+    operation: str,
+    source: str,
+    values: dict[str, Any] | None = None,
+    filters: list[dict[str, Any]] | None = None,
+    limit: int = 30,
+    query: dict[str, Any] | None = None,
+) -> str:
+    """Execute structured CRUD operations over allowed sources."""
+    return _run_local_tool(
+        "crud_database",
+        {
+            "operation": operation,
+            "source": source,
+            "values": values or {},
+            "filters": filters or [],
+            "limit": limit,
+            "query": query,
+        },
+    )
+
+
+@mcp.tool()
 def get_last_record_value(job_id: int | None = None) -> str:
     """Get the most recent extracted record value for a job or latest completed job."""
     arguments: dict[str, Any] = {}
