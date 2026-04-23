@@ -52,6 +52,34 @@ def extract_images_in_order(docx_file):
         return images
 
 
+def extract_text_from_docx(docx_file):
+    """Extract text content from a .docx file."""
+    docx_file.seek(0)
+    text_content = []
+    
+    try:
+        with zipfile.ZipFile(docx_file) as archive:
+            # Read the main document
+            if "word/document.xml" in archive.namelist():
+                document_xml = archive.read("word/document.xml")
+                document_root = ET.fromstring(document_xml)
+                
+                # Extract text from paragraphs
+                for paragraph in document_root.iter():
+                    if paragraph.tag.endswith('}p'):  # Paragraph
+                        para_text = []
+                        for run in paragraph.iter():
+                            if run.tag.endswith('}t'):  # Text run
+                                if run.text:
+                                    para_text.append(run.text)
+                        if para_text:
+                            text_content.append(''.join(para_text))
+        
+        return '\n'.join(text_content).strip()
+    except Exception:
+        return ""
+
+
 def _normalize_target(target):
     if target.startswith("/"):
         return target.lstrip("/")

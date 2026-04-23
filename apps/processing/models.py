@@ -11,6 +11,7 @@ class ProcessRun(models.Model):
 
     source_docx = models.FileField(upload_to="process_runs/%Y/%m/%d/documents/")
     original_filename = models.CharField(max_length=255)
+    extracted_text = models.TextField(blank=True, default="")
     status = models.CharField(
         max_length=32, choices=Status.choices, default=Status.UPLOADED
     )

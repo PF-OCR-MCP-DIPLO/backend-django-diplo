@@ -5,7 +5,7 @@ import zipfile
 from django.core.files.base import ContentFile
 from django.db import transaction
 
-from apps.documents.services.docx_image_extractor import extract_images_in_order
+from apps.documents.services.docx_image_extractor import extract_images_in_order, extract_text_from_docx
 from apps.processing.models import ProcessRun, SourceImage
 from apps.processing.services.settings_service import (
     as_snapshot_dict,
@@ -25,6 +25,11 @@ def create_process_run_from_upload(uploaded_file):
         process_run.source_docx.open("rb")
         try:
             extracted_images = extract_images_in_order(process_run.source_docx)
+            # Extract text from the document
+            process_run.source_docx.seek(0)
+            extracted_text = extract_text_from_docx(process_run.source_docx)
+            process_run.extracted_text = extracted_text
+            process_run.save(update_fields=["extracted_text", "updated_at"])
         except (zipfile.BadZipFile, KeyError, ValueError) as error:
             raise UploadValidationError(
                 code="invalid_docx",

@@ -238,6 +238,5 @@ class AssistantChatView(APIView):
             messages=payload["messages"],
             job_id=payload.get("job_id"),
             errors=payload.get("errors", 0),
-            query_context=payload.get("query_context") or {},
         )
         return Response(result)

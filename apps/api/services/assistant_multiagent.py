@@ -112,7 +112,6 @@ class IntentAgent:
         messages: list[dict[str, str]],
         job_id: int | None,
         errors: int,
-        query_context: dict[str, Any] | None = None,
     ) -> AssistantIntent:
         last_user_message = self._last_user_message(messages)
         if not last_user_message:
@@ -123,7 +122,6 @@ class IntentAgent:
         direct_intent = self._infer_direct_intent(
             last_user_message,
             job_id,
-            query_context=query_context or {},
         )
         if direct_intent is not None:
             return direct_intent
@@ -140,7 +138,6 @@ class IntentAgent:
         self,
         text: str,
         job_id: int | None,
-        query_context: dict[str, Any],
     ) -> AssistantIntent | None:
         crud_intent = self._infer_crud_intent(text)
         if crud_intent is not None:
@@ -150,17 +147,6 @@ class IntentAgent:
         if transactions_intent is not None:
             return transactions_intent
 
-        if self._matches_followup_query(text) and isinstance(
-            query_context.get("query"), dict
-        ):
-            return AssistantIntent(
-                name="followup_not_supported",
-                confidence=0.9,
-                tool_hint="none",
-                arguments={},
-                summary="Solicitud ambigua dependiente del contexto previo",
-            )
-
         if self._matches_completed_records_total(text):
             return AssistantIntent(
                 name="completed_records_total",
@@ -168,6 +154,20 @@ class IntentAgent:
                 tool_hint="get_completed_records_summary",
                 arguments={"job_id": job_id} if job_id is not None else {},
                 summary="Pregunta por el total acumulado de los registros completados",
+            )
+
+        if self._matches_count_records(text):
+            return AssistantIntent(
+                name="count_records",
+                confidence=0.95,
+                tool_hint="query_database",
+                arguments={
+                    "query": {
+                        "source": "deposits",
+                        "aggregations": [{"type": "count", "field": "id", "as": "total_records"}],
+                    }
+                },
+                summary="Pregunta por la cantidad total de registros",
             )
 
         if self._matches_latest_records(text):
@@ -960,6 +960,23 @@ class IntentAgent:
         )
         return any(term in text for term in total_terms)
 
+    def _matches_count_records(self, text: str) -> bool:
+        count_terms = (
+            "cuántos registros",
+            "cuantos registros",
+            "número de registros",
+            "numero de registros",
+            "cantidad de registros",
+            "total de registros",
+            "cuántas transacciones",
+            "cuantas transacciones",
+            "cuántos depositos",
+            "cuantos depositos",
+            "cuántas consignaciones",
+            "cuantas consignaciones",
+        )
+        return any(term in text for term in count_terms)
+
     def _matches_recent_jobs(self, text: str) -> bool:
         return any(
             phrase in text
@@ -1052,6 +1069,7 @@ Contexto:
 Clasifica el ultimo mensaje del usuario en uno de estos intentos:
 - last_record_value
 - completed_records_total
+- count_records
 - recent_jobs
 - job_status
 - job_logs
@@ -1075,8 +1093,7 @@ Responde SOLO con JSON valido y nada mas usando este esquema:
   "arguments": {{ ... }}
 }}
 
-Conversacion:
-{self._format_conversation(messages)}
+Ultimo mensaje del usuario: {self._last_user_message(messages)}
 """.strip()
 
         raw_response = self._generate_text(prompt)
@@ -1202,15 +1219,19 @@ class PlanningAgent:
         self.provider = provider
         self.api_key = api_key
 
+    def _last_user_message(self, messages: list[dict[str, str]]) -> str:
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                return (message.get("content") or "").strip().lower()
+        return ""
+
     def plan(
         self,
         intent: AssistantIntent,
         messages: list[dict[str, str]],
         job_id: int | None,
         errors: int,
-        query_context: dict[str, Any] | None = None,
     ) -> AssistantPlan:
-        safe_context = query_context or {}
         if intent.tool_hint:
             arguments = dict(intent.arguments)
             if (
@@ -1229,18 +1250,7 @@ class PlanningAgent:
             ):
                 arguments["job_id"] = job_id
             if intent.tool_hint == "query_database":
-                previous_query = (
-                    safe_context.get("query")
-                    if isinstance(safe_context.get("query"), dict)
-                    else {}
-                )
-                query_candidate = arguments.get("query") or {}
-                if self._should_merge_query_context(query_candidate):
-                    arguments["query"] = self._merge_query_context(
-                        previous_query, query_candidate
-                    )
-                else:
-                    arguments["query"] = query_candidate
+                arguments["query"] = arguments.get("query") or {}
             return AssistantPlan(
                 tool=intent.tool_hint,
                 arguments=arguments,
@@ -1248,7 +1258,7 @@ class PlanningAgent:
                 intent_summary=intent.summary,
             )
 
-        conversation = self._format_conversation(messages)
+        conversation = self._last_user_message(messages)
         sql_mode_rules = (
             "- query_database_sql permite SQL libre para pruebas."
             if _allow_unsafe_sql_enabled()
@@ -1267,7 +1277,6 @@ Contexto:
 - resumen_intencion: {intent.summary}
 - job_id_actual: {job_id if job_id is not None else 'null'}
 - errores_detectados: {errors}
-- query_context_actual: {json.dumps(safe_context, ensure_ascii=False, default=str)}
 
 Herramientas disponibles:
 - health_check
@@ -1297,6 +1306,7 @@ Reglas:
 - Si la intencion es recent_jobs, usa list_jobs.
 - Si la intencion es last_record_value, usa get_last_record_value.
 - Si la intencion es completed_records_total, usa get_completed_records_summary.
+- Si la intencion es count_records, usa query_database con una agregacion de tipo count.
 - Si la intencion es db_schema, usa describe_database_schema.
 - Si la intencion es sql_query, usa query_database_sql con arguments.sql.
 - Si la intencion es db_query, usa query_database con un objeto `query` en arguments.
@@ -1360,18 +1370,7 @@ Conversacion:
             arguments["job_id"] = job_id
 
         if tool == "query_database":
-            previous_query = (
-                safe_context.get("query")
-                if isinstance(safe_context.get("query"), dict)
-                else {}
-            )
-            query_candidate = arguments.get("query") or {}
-            if self._should_merge_query_context(query_candidate):
-                arguments["query"] = self._merge_query_context(
-                    previous_query, query_candidate
-                )
-            else:
-                arguments["query"] = query_candidate
+            arguments["query"] = arguments.get("query") or {}
 
         return AssistantPlan(
             tool=tool,
@@ -1379,54 +1378,6 @@ Conversacion:
             intent_name=intent.name,
             intent_summary=intent.summary,
         )
-
-    def _merge_query_context(
-        self, previous: dict[str, Any], current: dict[str, Any]
-    ) -> dict[str, Any]:
-        merged: dict[str, Any] = {
-            "source": current.get("source") or previous.get("source") or "process_runs",
-            "select": (
-                current.get("select")
-                if isinstance(current.get("select"), list)
-                else previous.get("select", [])
-            ),
-            "filters": [],
-            "aggregations": (
-                current.get("aggregations")
-                if isinstance(current.get("aggregations"), list)
-                else previous.get("aggregations", [])
-            ),
-            "group_by": (
-                current.get("group_by")
-                if isinstance(current.get("group_by"), list)
-                else previous.get("group_by", [])
-            ),
-            "order_by": (
-                current.get("order_by")
-                if isinstance(current.get("order_by"), list)
-                else previous.get("order_by", [])
-            ),
-            "limit": current.get("limit") or previous.get("limit") or 30,
-        }
-
-        previous_filters = (
-            previous.get("filters") if isinstance(previous.get("filters"), list) else []
-        )
-        current_filters = (
-            current.get("filters") if isinstance(current.get("filters"), list) else []
-        )
-        merged["filters"] = [*previous_filters, *current_filters]
-
-        if not merged["select"] and not merged["aggregations"]:
-            merged["select"] = ["id", "created_at"]
-
-        return merged
-
-    def _should_merge_query_context(self, query_candidate: dict[str, Any]) -> bool:
-        if not isinstance(query_candidate, dict):
-            return True
-        # Merge only when current query is empty, i.e., explicit follow-up refinement.
-        return len(query_candidate) == 0
 
     def _generate_text(self, prompt: str) -> str:
         if self.provider == "anthropic":
@@ -2387,6 +2338,12 @@ class ResponseAgent:
         self.provider = provider
         self.api_key = api_key
 
+    def _last_user_message(self, messages: list[dict[str, str]]) -> str:
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                return (message.get("content") or "").strip().lower()
+        return ""
+
     def compose(
         self,
         messages: list[dict[str, str]],
@@ -2435,6 +2392,15 @@ class ResponseAgent:
                 return str(detail)
             source = tool_payload.get("source", "datos")
             meta = tool_payload.get("meta") or {}
+            rows = tool_payload.get("rows", [])
+            
+            # Special handling for count aggregations
+            if meta.get("has_aggregations") and len(rows) == 1:
+                row = rows[0]
+                if "total_records" in row:
+                    count = row["total_records"]
+                    return f"Actualmente hay {count} registros en total."
+            
             rows_count = meta.get("rows_count", 0)
             return f"Ejecuté una consulta sobre {source} y obtuve {rows_count} resultado(s)."
 
@@ -2467,7 +2433,7 @@ class ResponseAgent:
             job_ref = tool_payload.get("job_id")
             return f"El ultimo registro del job #{job_ref} tiene valor {valor} y referencia {referencia}."
 
-        conversation = self._format_conversation(messages)
+        conversation = self._last_user_message(messages)
         prompt = f"""
 Eres el asistente del dashboard de procesamiento.
 Responde en espanol, claro y breve.
@@ -2609,23 +2575,19 @@ class AssistantAgent:
         messages: list[dict[str, str]],
         job_id: int | None = None,
         errors: int = 0,
-        query_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._sync_runtime_model()
-        safe_context = query_context or {}
         try:
             intent = self.intent_agent.infer(
                 messages,
                 job_id=job_id,
                 errors=errors,
-                query_context=safe_context,
             )
             plan = self.planner_agent.plan(
                 intent,
                 messages,
                 job_id=job_id,
                 errors=errors,
-                query_context=safe_context,
             )
             tool_payload = self.tool_agent.execute(plan, job_id=job_id)
             reply = self.response_agent.compose(
@@ -2636,23 +2598,10 @@ class AssistantAgent:
                 job_id=job_id,
                 errors=errors,
             )
-            next_context = safe_context
-            if plan.tool == "query_database" and isinstance(
-                plan.arguments.get("query"), dict
-            ):
-                next_context = {"query": plan.arguments["query"]}
-            elif plan.tool == "query_database_sql" and isinstance(
-                plan.arguments.get("sql"), str
-            ):
-                next_context = {
-                    "sql": plan.arguments.get("sql"),
-                    "limit": plan.arguments.get("limit", 100),
-                }
             return {
                 "reply": reply,
                 "tool": plan.tool,
                 "data": tool_payload,
-                "query_context": next_context,
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             logger.warning(
@@ -2670,5 +2619,4 @@ class AssistantAgent:
                     "detail": "assistant_unavailable",
                     "error": str(exc),
                 },
-                "query_context": safe_context,
             }

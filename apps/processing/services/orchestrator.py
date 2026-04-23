@@ -83,6 +83,27 @@ def process_prepared_job(process_run, runtime_config):
     )
     final_status = ProcessRun.Status.FAILED
     try:
+        # Process extracted text from the Word document first
+        if process_run.extracted_text.strip():
+            try:
+                total_records += supervisor.process_text(
+                    process_run,
+                    process_run.extracted_text,
+                    runtime_config,
+                    _safe_create_log,
+                )
+            except Exception as error:
+                _safe_create_log(
+                    process_run,
+                    None,
+                    "text_processing_failed",
+                    runtime_config,
+                    notes=str(error),
+                    is_error=True,
+                )
+                if not fatal_error:
+                    fatal_error = str(error)
+        
         for source_image in process_run.source_images.order_by("sequence_index", "id"):
             try:
                 total_records += supervisor.process_image(

@@ -219,7 +219,6 @@ class AssistantChatSerializer(serializers.Serializer):
     )
     job_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     errors = serializers.IntegerField(required=False, min_value=0, default=0)
-    query_context = serializers.DictField(required=False, default=dict)
 
     def validate_messages(self, value):
         allowed_roles = {"user", "assistant", "system"}

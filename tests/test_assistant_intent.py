@@ -12,7 +12,6 @@ class AssistantIntentQueryTests(SimpleTestCase):
             messages=[{"role": "user", "content": message}],
             job_id=None,
             errors=0,
-            query_context={},
         )
 
     def test_latest_transactions_with_limit(self):
@@ -78,7 +77,6 @@ class AssistantIntentQueryTests(SimpleTestCase):
             messages=[{"role": "user", "content": "ahora dame el promedio de transacciones"}],
             job_id=None,
             errors=0,
-            query_context=previous_context,
         )
 
         self.assertEqual(intent.tool_hint, "query_database")
@@ -91,7 +89,6 @@ class AssistantIntentQueryTests(SimpleTestCase):
             messages=[{"role": "user", "content": "ahora dame el promedio de transacciones"}],
             job_id=None,
             errors=0,
-            query_context=previous_context,
         )
         self.assertEqual(plan.tool, "query_database")
         merged_filters = plan.arguments["query"].get("filters", [])
@@ -111,9 +108,7 @@ class AssistantIntentQueryTests(SimpleTestCase):
         intent = self.agent._infer_direct_intent(
             text="ahora solo esas",
             job_id=None,
-            query_context=previous_context,
         )
         self.assertIsNotNone(intent)
         assert isinstance(intent, AssistantIntent)
-        self.assertEqual(intent.name, "followup_not_supported")
-        self.assertEqual(intent.tool_hint, "none")
+        self.assertEqual(intent.name, "unknown")  # Since followup is no longer supported

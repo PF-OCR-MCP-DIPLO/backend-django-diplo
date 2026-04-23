@@ -131,7 +131,7 @@ STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"
 OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "ollama_vision")
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama_text")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:1b-it-qat")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b")
 OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:e2b")
 OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "320"))
 LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
