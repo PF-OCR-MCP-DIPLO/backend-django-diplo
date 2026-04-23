@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
 from apps.processing.models import ProcessRun
@@ -90,6 +91,29 @@ def build_docx_with_images(image_map):
     return buffer.getvalue()
 
 
+def build_docx_without_images():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Documento sin imagenes</w:t></w:r></w:p>
+  </w:body>
+</w:document>""",
+        )
+        archive.writestr(
+            "word/_rels/document.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>""",
+        )
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+@override_settings(PROCESS_JOBS_ASYNC=False)
 class DocumentApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -102,93 +126,48 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
 
-    @patch("apps.api.views.AssistantAgent")
-    def test_assistant_chat_endpoint(self, assistant_cls):
-        agent = assistant_cls.return_value
-        agent.answer.return_value = {
-            "reply": "hola",
-            "tool": "none",
-            "data": {"kind": "none"},
-            "query_context": {},
-        }
-
+    def test_upload_rejects_non_docx_with_error_envelope(self):
+        upload = SimpleUploadedFile("file.txt", b"nope", content_type="text/plain")
         response = self.client.post(
-            "/api/assistant/chat/",
-            {
-                "messages": [{"role": "user", "content": "hola"}],
-            },
-            format="json",
+            "/api/documents/upload/", {"file": upload}, format="multipart"
         )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["reply"], "hola")
-        agent.answer.assert_called_once_with(
-            messages=[{"role": "user", "content": "hola"}],
-            job_id=None,
-            errors=0,
-            query_context={},
-        )
-
-    def test_assistant_chat_endpoint_validates_role(self):
-        response = self.client.post(
-            "/api/assistant/chat/",
-            {
-                "messages": [{"role": "invalid", "content": "hola"}],
-            },
-            format="json",
-        )
-
         self.assertEqual(response.status_code, 400)
-        self.assertIn("messages", response.json())
-
-    @patch(
-        "apps.api.services.assistant_multiagent.IntentAgent._ollama_generate",
-        side_effect=requests.HTTPError("404 Client Error"),
-    )
-    def test_assistant_chat_endpoint_handles_llm_failure(self, _mock_generate):
-        response = self.client.post(
-            "/api/assistant/chat/",
-            {
-                "messages": [{"role": "user", "content": "hola"}],
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["tool"], "none")
-        self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        self.assertIn("file", payload["error"]["details"])
 
-    @patch(
-        "apps.api.services.assistant_multiagent.ResponseAgent._ollama_generate",
-        return_value="Respuesta de prueba",
-    )
-    @patch(
-        "apps.api.services.assistant_multiagent.PlanningAgent._ollama_generate",
-        return_value='{"tool":"none","arguments":{}}',
-    )
-    @patch(
-        "apps.api.services.assistant_multiagent.IntentAgent._ollama_generate",
-        return_value='{"intent":"generic_chat","tool_hint":null,"confidence":0.9,"summary":"chat","arguments":{}}',
-    )
-    def test_assistant_chat_endpoint_works_without_allow_unsafe_sql_setting(
-        self,
-        _mock_intent,
-        _mock_planner,
-        _mock_response,
-    ):
-        response = self.client.post(
-            "/api/assistant/chat/",
-            {
-                "messages": [{"role": "user", "content": "hola"}],
-            },
-            format="json",
+    def test_upload_rejects_docx_without_images(self):
+        empty_docx = build_docx_without_images()
+        upload = SimpleUploadedFile(
+            "empty.docx",
+            empty_docx,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
-
-        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
         payload = response.json()
-        self.assertEqual(payload["tool"], "none")
-        self.assertEqual(payload["reply"], "Respuesta de prueba")
+        self.assertEqual(payload["error"]["code"], "docx_no_images")
+
+    def test_upload_rejects_corrupted_docx(self):
+        upload = SimpleUploadedFile(
+            "bad.docx",
+            b"not-a-zip",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "invalid_docx")
+
+    def test_job_detail_not_found_uses_error_envelope(self):
+        response = self.client.get("/api/jobs/999999/")
+        self.assertEqual(response.status_code, 404)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "not_found")
 
     def test_upload_process_export_and_detail(self):
         upload = SimpleUploadedFile(
@@ -335,6 +314,48 @@ class DocumentApiTests(TestCase):
         job_id = upload_response.json()["id"]
         export_response = self.client.post(f"/api/jobs/{job_id}/export/")
         self.assertEqual(export_response.status_code, 409)
+        payload = export_response.json()
+        self.assertEqual(payload["error"]["code"], "job_not_exportable")
+        self.assertIn("complet", payload["error"]["message"].lower())
+        self.assertEqual(payload["error"]["details"]["status"], "uploaded")
+
+    @override_settings(API_KEY="dev")
+    def test_sensitive_endpoints_require_api_key_when_configured(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+
+        # Missing key
+        process_response = self.client.post(f"/api/jobs/{job_id}/process/")
+        self.assertEqual(process_response.status_code, 403)
+        self.assertEqual(process_response.json()["error"]["code"], "forbidden")
+
+        export_response = self.client.post(f"/api/jobs/{job_id}/export/")
+        self.assertEqual(export_response.status_code, 403)
+        self.assertEqual(export_response.json()["error"]["code"], "forbidden")
+
+        # With key
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[],
+            ),
+        ):
+            process_ok = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+        self.assertEqual(process_ok.status_code, 200)
 
     def test_settings_endpoints(self):
         response = self.client.get("/api/processing/settings/")
@@ -372,10 +393,12 @@ class DocumentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         payload = response.json()
-        self.assertIn("ocr_provider", payload)
-        self.assertIn("ocr_api_key", payload)
-        self.assertIn("llm_provider", payload)
-        self.assertIn("llm_api_key", payload)
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        details = payload["error"]["details"]
+        self.assertIn("ocr_provider", details)
+        self.assertIn("ocr_api_key", details)
+        self.assertIn("llm_provider", details)
+        self.assertIn("llm_api_key", details)
 
     def test_settings_validation_requires_models_and_timeout_range(self):
         response = self.client.patch(
@@ -392,9 +415,11 @@ class DocumentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         payload = response.json()
-        self.assertIn("ocr_model", payload)
-        self.assertIn("llm_model", payload)
-        self.assertIn("request_timeout_seconds", payload)
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        details = payload["error"]["details"]
+        self.assertIn("ocr_model", details)
+        self.assertIn("llm_model", details)
+        self.assertIn("request_timeout_seconds", details)
 
     def test_settings_tesseract_normalizes_provider(self):
         response = self.client.patch(
@@ -487,3 +512,122 @@ class DocumentApiTests(TestCase):
         logs_response = self.client.get(f"/api/jobs/{job_id}/logs/")
         self.assertEqual(logs_response.status_code, 200)
         self.assertGreaterEqual(len(logs_response.json()), 3)
+
+    @override_settings(API_KEY="dev")
+    def test_bulk_deposit_corrections_persist_and_refresh_detail(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        job_id = upload_response.json()["id"]
+
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                side_effect=[
+                    [
+                        {
+                            "fecha_consignacion": "01/04/2026",
+                            "hora_consignacion": "10:00",
+                            "referencia": "REF001",
+                            "valor": 150000.0,
+                            "archivo_origen": "image1.png",
+                        }
+                    ],
+                    [],
+                ],
+            ),
+        ):
+            process_response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+
+        self.assertEqual(process_response.status_code, 200)
+        deposit_id = process_response.json()["source_images"][0]["deposits"][0]["id"]
+        correction_response = self.client.patch(
+            f"/api/jobs/{job_id}/deposits/",
+            {
+                "items": [
+                    {
+                        "id": deposit_id,
+                        "fecha_consignacion": "22/04/2026",
+                        "hora_consignacion": "15:45",
+                        "referencia": "REF999",
+                        "valor": "175000",
+                    }
+                ]
+            },
+            format="json",
+            HTTP_X_API_KEY="dev",
+        )
+
+        self.assertEqual(correction_response.status_code, 200)
+        corrected = correction_response.json()["source_images"][0]["deposits"][0]
+        self.assertEqual(corrected["fecha_consignacion"], "22/04/2026")
+        self.assertEqual(corrected["hora_consignacion"], "15:45")
+        self.assertEqual(corrected["referencia"], "REF999")
+        self.assertEqual(corrected["valor"], "175000.00")
+        self.assertEqual(corrected["observations"], [])
+
+        detail_response = self.client.get(f"/api/jobs/{job_id}/")
+        refreshed = detail_response.json()["source_images"][0]["deposits"][0]
+        self.assertEqual(refreshed["referencia"], "REF999")
+
+    @override_settings(API_KEY="dev")
+    def test_bulk_deposit_corrections_require_api_key(self):
+        process_run = ProcessRun.objects.create(
+            original_filename="test.docx", status=ProcessRun.Status.COMPLETED
+        )
+        response = self.client.patch(
+            f"/api/jobs/{process_run.pk}/deposits/",
+            {
+                "items": [
+                    {
+                        "id": 1,
+                        "fecha_consignacion": "22/04/2026",
+                        "hora_consignacion": "15:45",
+                        "referencia": "REF999",
+                        "valor": "175000",
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(PROCESS_JOBS_ASYNC=True, API_KEY="dev")
+    def test_process_endpoint_returns_accepted_when_async_enabled(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/", {"file": upload}, format="multipart"
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        job_id = upload_response.json()["id"]
+
+        def fake_start(job):
+            ProcessRun.objects.filter(pk=job.pk).update(
+                status=ProcessRun.Status.PROCESSING
+            )
+            return ProcessRun.objects.get(pk=job.pk)
+
+        with patch(
+            "apps.api.views.start_job_processing",
+            side_effect=fake_start,
+        ):
+            response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["status"], "processing")

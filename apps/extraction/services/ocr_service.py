@@ -1,12 +1,16 @@
 from apps.extraction.providers.ocr.ollama_vision import OllamaVisionOCRProvider
+from apps.extraction.providers.ocr.stub import StubVisionOCRProvider
 from apps.extraction.providers.ocr.tesseract import (
     TesseractOCRProvider,
     resolve_tesseract_language,
 )
+from django.conf import settings
 
 
 def _get_provider(provider_name):
     if provider_name == "ollama":
+        if getattr(settings, "STUB_PROVIDERS", False):
+            return StubVisionOCRProvider(), "vision"
         return OllamaVisionOCRProvider(), "vision"
     if provider_name == "openai":
         raise ValueError("OCR provider openai is not implemented")

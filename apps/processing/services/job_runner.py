@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import logging
+import threading
+
+from django.db import close_old_connections
+
+from apps.processing.models import ProcessRun
+from apps.processing.services.orchestrator import (
+    prepare_job_for_processing,
+    process_prepared_job,
+)
+
+logger = logging.getLogger(__name__)
+
+_running_jobs: set[int] = set()
+_running_jobs_lock = threading.Lock()
+
+
+def start_job_processing(process_run: ProcessRun) -> ProcessRun:
+    with _running_jobs_lock:
+        if process_run.pk in _running_jobs:
+            raise RuntimeError("job_already_processing")
+        _running_jobs.add(process_run.pk)
+
+    try:
+        prepared_job, runtime_config = prepare_job_for_processing(process_run)
+    except Exception:
+        with _running_jobs_lock:
+            _running_jobs.discard(process_run.pk)
+        raise
+
+    worker = threading.Thread(
+        target=_run_job_in_background,
+        args=(prepared_job.pk, runtime_config),
+        daemon=True,
+        name=f"process-job-{prepared_job.pk}",
+    )
+    worker.start()
+    return prepared_job
+
+
+def _run_job_in_background(job_id, runtime_config):
+    close_old_connections()
+    try:
+        process_run = ProcessRun.objects.get(pk=job_id)
+        process_prepared_job(process_run, runtime_config)
+    except Exception:
+        logger.exception("Background processing failed for job %s", job_id)
+    finally:
+        with _running_jobs_lock:
+            _running_jobs.discard(job_id)
+        close_old_connections()

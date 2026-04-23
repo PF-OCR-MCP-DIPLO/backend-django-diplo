@@ -9,6 +9,22 @@ class CurrencyTests(SimpleTestCase):
         self.assertEqual(smart_parse_currency("1.200,50"), 1200.5)
         self.assertEqual(smart_parse_currency("$1,200.50"), 1200.5)
         self.assertEqual(smart_parse_currency("70000"), 70000.0)
+        self.assertIsNone(smart_parse_currency(""))
+        self.assertIsNone(smart_parse_currency(None))
+
+    def test_smart_parse_currency_regional_formats(self):
+        cases = {
+            "50.000,00": 50000.0,
+            "50,000.00": 50000.0,
+            "$50.000,00": 50000.0,
+            "COP 50.000,00": 50000.0,
+            "50000": 50000.0,
+            "50 000,00": 50000.0,
+            "50.000": 50000.0,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(smart_parse_currency(raw), expected)
 
 
 class ExtractionSchemaTests(SimpleTestCase):
@@ -20,6 +36,36 @@ class ExtractionSchemaTests(SimpleTestCase):
             valor="50.000,00",
         )
         self.assertEqual(record.valor, 50000.0)
+
+    def test_valid_record_accepts_regional_currency_formats(self):
+        values = [
+            "50.000,00",
+            "50,000.00",
+            "$50.000,00",
+            "COP 50.000,00",
+            "50000",
+            "50 000,00",
+        ]
+        for raw in values:
+            with self.subTest(raw=raw):
+                record = ConsignacionBasica(
+                    fecha_consignacion="15/04/2026",
+                    hora_consignacion="09:30",
+                    referencia="ABC123",
+                    valor=raw,
+                )
+                self.assertEqual(record.valor, 50000.0)
+
+    def test_invalid_or_negative_valor_rejected(self):
+        for raw in ["0", 0, "-50.000,00", "-1"]:
+            with self.subTest(raw=raw):
+                with self.assertRaises(ValueError):
+                    ConsignacionBasica(
+                        fecha_consignacion="15/04/2026",
+                        hora_consignacion="09:30",
+                        referencia="ABC123",
+                        valor=raw,
+                    )
 
     def test_invalid_reference_raises(self):
         with self.assertRaises(ValueError):

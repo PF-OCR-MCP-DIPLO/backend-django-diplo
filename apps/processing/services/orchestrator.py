@@ -37,9 +37,8 @@ def _safe_create_log(process_run, source_image, stage, runtime_config, **kwargs)
         return None
 
 
-def process_job(process_run):
+def prepare_job_for_processing(process_run):
     runtime_config = get_runtime_config()
-    supervisor = ProcessingSupervisorAgent()
     process_run = ProcessRun.objects.get(pk=process_run.pk)
     with transaction.atomic():
         process_run.deposits.all().delete()
@@ -67,6 +66,11 @@ def process_job(process_run):
             error_message="",
             ocr_provider=runtime_config.ocr_provider,
         )
+    return process_run, runtime_config
+
+
+def process_prepared_job(process_run, runtime_config):
+    supervisor = ProcessingSupervisorAgent()
     total_records = 0
     fatal_error = ""
     failed_images = 0
@@ -150,3 +154,8 @@ def process_job(process_run):
             is_error=process_run.status == ProcessRun.Status.FAILED,
         )
     return process_run
+
+
+def process_job(process_run):
+    prepared_job, runtime_config = prepare_job_for_processing(process_run)
+    return process_prepared_job(prepared_job, runtime_config)

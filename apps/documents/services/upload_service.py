@@ -1,5 +1,6 @@
 from hashlib import sha256
 from pathlib import Path
+import zipfile
 
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -22,10 +23,20 @@ def create_process_run_from_upload(uploaded_file):
         uploaded_file.seek(0)
         process_run.source_docx.save(uploaded_file.name, uploaded_file, save=True)
         process_run.source_docx.open("rb")
-        extracted_images = extract_images_in_order(process_run.source_docx)
+        try:
+            extracted_images = extract_images_in_order(process_run.source_docx)
+        except (zipfile.BadZipFile, KeyError, ValueError) as error:
+            raise UploadValidationError(
+                code="invalid_docx",
+                message="El archivo .docx no es valido o esta corrupto.",
+                details={"reason": str(error)},
+            ) from error
         process_run.source_docx.close()
         if not extracted_images:
-            raise ValueError("The .docx file does not contain embedded images.")
+            raise UploadValidationError(
+                code="docx_no_images",
+                message="El archivo .docx no contiene imagenes embebidas para procesar.",
+            )
         with transaction.atomic():
             for extracted in extracted_images:
                 filename = _build_image_filename(
@@ -48,6 +59,14 @@ def create_process_run_from_upload(uploaded_file):
         process_run.source_docx.delete(save=False)
         process_run.delete()
         raise
+
+
+class UploadValidationError(Exception):
+    def __init__(self, *, code: str, message: str, details: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details = details or {}
 
 
 def _build_image_filename(process_run_id, sequence_index, source_name):

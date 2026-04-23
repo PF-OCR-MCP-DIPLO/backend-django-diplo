@@ -2,6 +2,8 @@ Django==6.0.4
 djangorestframework==3.17.1
 django-cors-headers==4.7.0
 black==26.3.1
+coverage==7.10.6
+drf-spectacular==0.28.0
 openpyxl==3.1.5
 pydantic==2.12.5
 requests==2.33.0

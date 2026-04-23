@@ -1,11 +1,15 @@
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.errors import api_error_response
+from apps.api.auth import ApiKeyPermission
 from apps.api.serializers import (
     AssistantChatSerializer,
     ExtractionLogSerializer,
+    BulkDepositCorrectionSerializer,
     ProcessRunDetailSerializer,
     ProcessRunListSerializer,
     ProcessingSettingsSerializer,
@@ -13,7 +17,10 @@ from apps.api.serializers import (
 )
 from apps.api.services.assistant_agent import AssistantAgent
 from apps.documents.services.upload_service import create_process_run_from_upload
+from apps.documents.services.upload_service import UploadValidationError
 from apps.processing.models import ProcessRun
+from apps.processing.services.job_runner import start_job_processing
+from apps.processing.services.manual_corrections import apply_deposit_corrections
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.orchestrator import process_job
 from apps.processing.services.settings_service import (
@@ -33,11 +40,22 @@ class HealthView(APIView):
 class DocumentUploadView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "documents_upload"
 
     def post(self, request):
         serializer = UploadDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        process_run = create_process_run_from_upload(serializer.validated_data["file"])
+        try:
+            process_run = create_process_run_from_upload(
+                serializer.validated_data["file"]
+            )
+        except UploadValidationError as error:
+            return api_error_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=error.code,
+                message=error.message,
+                details=error.details or None,
+            )
         return Response(
             ProcessRunDetailSerializer(process_run, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
@@ -69,14 +87,26 @@ class JobDetailView(APIView):
 class JobProcessView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "jobs_process"
+
+    def get_permissions(self):
+        return [ApiKeyPermission()]
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
         if job.status == ProcessRun.Status.PROCESSING:
-            return Response(
-                {"detail": "This job is already processing."},
-                status=status.HTTP_409_CONFLICT,
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_already_processing",
+                message="Esta ejecucion ya se encuentra en procesamiento.",
             )
+        if settings.PROCESS_JOBS_ASYNC:
+            started = start_job_processing(job)
+            serializer = ProcessRunDetailSerializer(
+                started, context={"request": request}
+            )
+            return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
         processed = process_job(job)
         processed = ProcessRun.objects.prefetch_related("source_images__deposits").get(
             pk=processed.pk
@@ -88,6 +118,10 @@ class JobProcessView(APIView):
 class JobExportView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "jobs_export"
+
+    def get_permissions(self):
+        return [ApiKeyPermission()]
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
@@ -95,9 +129,11 @@ class JobExportView(APIView):
             ProcessRun.Status.COMPLETED,
             ProcessRun.Status.COMPLETED_WITH_ERRORS,
         ):
-            return Response(
-                {"detail": "Only completed jobs can be exported."},
-                status=status.HTTP_409_CONFLICT,
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_not_exportable",
+                message="Solo las ejecuciones completadas pueden exportarse.",
+                details={"status": job.status},
             )
         exported = export_job_to_excel(job)
         serializer = ProcessRunDetailSerializer(exported, context={"request": request})
@@ -117,9 +153,54 @@ class JobLogsView(APIView):
         return Response(serializer.data)
 
 
+class JobDepositsBulkUpdateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get_permissions(self):
+        return [ApiKeyPermission()]
+
+    def patch(self, request, pk):
+        job = get_object_or_404(ProcessRun, pk=pk)
+        if job.status == ProcessRun.Status.PROCESSING:
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_not_editable",
+                message="No puedes corregir resultados mientras la ejecucion sigue procesando.",
+            )
+        serializer = BulkDepositCorrectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated_job = apply_deposit_corrections(
+                job, serializer.validated_data["items"]
+            )
+        except ValueError as error:
+            message = (
+                str(error.args[0]) if error.args else "Invalid deposit corrections."
+            )
+            details = error.args[1] if len(error.args) > 1 else None
+            return api_error_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_deposit_corrections",
+                message=message,
+                details=details,
+            )
+        response_serializer = ProcessRunDetailSerializer(
+            updated_job, context={"request": request}
+        )
+        return Response(response_serializer.data)
+
+
 class ProcessingSettingsView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "processing_settings"
+
+    def get_permissions(self):
+        # Read is public for DX; updates require API key when configured.
+        if self.request.method.upper() == "PATCH":
+            return [ApiKeyPermission()]
+        return []
 
     def get(self, request):
         serializer = ProcessingSettingsSerializer(get_or_create_processing_settings())

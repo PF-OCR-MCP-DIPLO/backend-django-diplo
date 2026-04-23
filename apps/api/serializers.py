@@ -1,5 +1,9 @@
+from decimal import Decimal
+
+from pydantic import ValidationError as PydanticValidationError
 from rest_framework import serializers
 
+from apps.extraction.schemas import ConsignacionBasica
 from apps.processing.models import (
     ExtractedDeposit,
     ExtractionLog,

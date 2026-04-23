@@ -1,10 +1,13 @@
 from django.conf import settings
 
 from apps.extraction.providers.llm.ollama_text import OllamaTextLLMProvider
+from apps.extraction.providers.llm.stub import StubTextLLMProvider
 
 
 def get_llm_provider(provider_name):
     if provider_name == "ollama":
+        if getattr(settings, "STUB_PROVIDERS", False):
+            return StubTextLLMProvider()
         return OllamaTextLLMProvider()
     if provider_name == "openai":
         raise ValueError("LLM provider openai is not implemented")
