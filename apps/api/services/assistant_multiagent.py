@@ -61,6 +61,22 @@ _ALLOWED_TOOLS = {
 logger = logging.getLogger(__name__)
 
 
+def _normalize_text(value: str) -> str:
+    return value.strip().lower()
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
+
+
+_RE_WORD_LIMIT = re.compile(r"\b(\d{1,3})\b")
+_RE_ID_FILTER = re.compile(r"(?:id\s*#?|id:)\s*(\d+)")
+_RE_AMOUNT_AFTER_PREFIX = re.compile(r"(?:a|por)\s*\$\s*([\d\.,]+)")
+_RE_REFERENCE_FILTER = re.compile(r"referencia\s*[:#]?\s*([a-z0-9\-]{4,})")
+_RE_YEAR = re.compile(r"\b(20\d{2})\b")
+_RE_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
+
+
 def _allow_unsafe_sql_enabled() -> bool:
     return bool(getattr(settings, "ALLOW_UNSAFE_SQL", False))
 
@@ -131,7 +147,7 @@ class IntentAgent:
     def _last_user_message(self, messages: list[dict[str, str]]) -> str:
         for message in reversed(messages):
             if message.get("role") == "user":
-                return (message.get("content") or "").strip().lower()
+                return _normalize_text(message.get("content") or "")
         return ""
 
     def _infer_direct_intent(
@@ -268,21 +284,17 @@ class IntentAgent:
             "ultimo valor",
             "último valor",
         )
-        return any(term in text for term in value_terms) and any(
-            term in text for term in record_terms
-        )
+        return _contains_any(text, value_terms) and _contains_any(text, record_terms)
 
     def _matches_latest_records(self, text: str) -> bool:
         return (
             "registro" in text
-            and any(
-                term in text for term in ("ultimos", "últimos", "recientes", "latest")
-            )
-            and not any(term in text for term in ("valor", "monto", "importe"))
+            and _contains_any(text, ("ultimos", "últimos", "recientes", "latest"))
+            and not _contains_any(text, ("valor", "monto", "importe"))
         )
 
     def _extract_limit(self, text: str) -> int:
-        match = re.search(r"\b(\d{1,3})\b", text)
+        match = _RE_WORD_LIMIT.search(text)
         if match:
             try:
                 return max(1, min(int(match.group(1)), 50))
@@ -308,9 +320,9 @@ class IntentAgent:
         return 5
 
     def _infer_crud_intent(self, text: str) -> AssistantIntent | None:
-        if not any(
-            term in text
-            for term in (
+        if not _contains_any(
+            text,
+            (
                 "transaccion",
                 "transacción",
                 "registro",
@@ -318,13 +330,11 @@ class IntentAgent:
                 "depósito",
                 "bd",
                 "base de datos",
-            )
+            ),
         ):
             return None
 
-        if any(
-            term in text for term in ("crear", "crea", "inserta", "agrega", "registrar")
-        ):
+        if _contains_any(text, ("crear", "crea", "inserta", "agrega", "registrar")):
             values: dict[str, Any] = {}
             reference = self._extract_reference_filter(text)
             if reference and isinstance(reference.get("value"), str):
@@ -364,14 +374,14 @@ class IntentAgent:
                 summary="Solicitud de creacion de registro",
             )
 
-        if any(
-            term in text
-            for term in ("actualiza", "actualizar", "editar", "modificar", "cambiar")
+        if _contains_any(
+            text,
+            ("actualiza", "actualizar", "editar", "modificar", "cambiar"),
         ):
             filters: list[dict[str, Any]] = []
             values: dict[str, Any] = {}
 
-            id_match = re.search(r"(?:id\s*#?|id:)\s*(\d+)", text)
+            id_match = _RE_ID_FILTER.search(text)
             if id_match:
                 filters.append(
                     {"field": "id", "op": "eq", "value": int(id_match.group(1))}
@@ -381,7 +391,7 @@ class IntentAgent:
             if ref_filter is not None:
                 filters.append(ref_filter)
 
-            amount_match = re.search(r"(?:a|por)\s*\$\s*([\d\.,]+)", text)
+            amount_match = _RE_AMOUNT_AFTER_PREFIX.search(text)
             if amount_match:
                 parsed_amount = self._to_numeric_amount(amount_match.group(1))
                 if parsed_amount is not None:
@@ -400,9 +410,9 @@ class IntentAgent:
                 summary="Solicitud de actualizacion de registro",
             )
 
-        if any(term in text for term in ("elimina", "eliminar", "borra", "borrar")):
+        if _contains_any(text, ("elimina", "eliminar", "borra", "borrar")):
             filters: list[dict[str, Any]] = []
-            id_match = re.search(r"(?:id\s*#?|id:)\s*(\d+)", text)
+            id_match = _RE_ID_FILTER.search(text)
             if id_match:
                 filters.append(
                     {"field": "id", "op": "eq", "value": int(id_match.group(1))}
@@ -564,65 +574,48 @@ class IntentAgent:
             "último mes",
             "este año",
         )
-        return any(term in text for term in transaction_terms) or (
-            any(term in text for term in action_terms)
-            and any(
-                token in text
-                for token in ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
-            )
+        return _contains_any(text, transaction_terms) or (
+            _contains_any(text, action_terms)
+            and _contains_any(text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo"))
         )
 
     def _has_explicit_limit_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
-                "ultimas",
-                "últimas",
-                "ultimos",
-                "últimos",
-                "top",
-                "primeras",
-                "primeros",
-            )
-        ) and bool(re.search(r"\b\d{1,3}\b", text))
+        return _contains_any(
+            text,
+            ("ultimas", "últimas", "ultimos", "últimos", "top", "primeras", "primeros"),
+        ) and bool(_RE_WORD_LIMIT.search(text))
 
     def _is_all_transactions_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "todas las transacciones",
                 "todos los movimientos",
                 "todas las transferencias",
-            )
+            ),
         )
 
     def _is_top_transactions_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
-                "mas altas",
-                "más altas",
-                "mas grandes",
-                "más grandes",
-                "top",
-            )
+        return _contains_any(
+            text,
+            ("mas altas", "más altas", "mas grandes", "más grandes", "top"),
         )
 
     def _is_references_only_request(self, text: str) -> bool:
-        return "referencia" in text and any(
-            phrase in text
-            for phrase in (
+        return "referencia" in text and _contains_any(
+            text,
+            (
                 "dame las referencias",
                 "muestrame las referencias",
                 "muéstrame las referencias",
                 "referencias entre",
-            )
+            ),
         )
 
     def _is_total_sum_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "cuanto es la cuenta en total",
                 "cuánto es la cuenta en total",
                 "suma de transacciones",
@@ -631,70 +624,64 @@ class IntentAgent:
                 "cuánto moví",
                 "cuanto movi en estos dias",
                 "cuánto moví en estos días",
-            )
+            ),
         )
 
     def _is_average_request(self, text: str) -> bool:
         return "promedio" in text
 
     def _is_count_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "cantidad de transacciones",
                 "cuantas transacciones",
                 "cuántas transacciones",
                 "numero de transacciones",
                 "número de transacciones",
-            )
+            ),
         )
 
     def _is_group_by_day_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "agrupalas por dia",
                 "agrúpalas por día",
                 "agrupar por dia",
                 "agrupar por día",
-            )
+            ),
         )
 
     def _is_sort_by_amount_desc_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "de mayor a menor valor",
                 "mayor a menor valor",
                 "ordenalas de mayor a menor",
                 "ordénalas de mayor a menor",
-            )
+            ),
         )
 
     def _is_sort_by_amount_asc_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
-                "de menor a mayor valor",
-                "menor a mayor valor",
-            )
-        )
+        return _contains_any(text, ("de menor a mayor valor", "menor a mayor valor"))
 
     def _is_sort_by_date_desc_request(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "fecha descendente",
                 "por fecha descendente",
                 "mas recientes",
                 "más recientes",
                 "lo ultimo que hice",
                 "lo último que hice",
-            )
+            ),
         )
 
     def _extract_reference_filter(self, text: str) -> dict[str, Any] | None:
-        pattern = re.search(r"referencia\s*[:#]?\s*([a-z0-9\-]{4,})", text)
+        pattern = _RE_REFERENCE_FILTER.search(text)
         if not pattern:
             return None
         reference = pattern.group(1).strip()
@@ -937,7 +924,7 @@ class IntentAgent:
         return None
 
     def _extract_year(self, text: str) -> int | None:
-        match = re.search(r"\b(20\d{2})\b", text)
+        match = _RE_YEAR.search(text)
         if not match:
             return None
         try:
@@ -958,7 +945,7 @@ class IntentAgent:
             "cuánto suman",
             "todos los registros completados",
         )
-        return any(term in text for term in total_terms)
+        return _contains_any(text, total_terms)
 
     def _matches_count_records(self, text: str) -> bool:
         count_terms = (
@@ -975,48 +962,42 @@ class IntentAgent:
             "cuántas consignaciones",
             "cuantas consignaciones",
         )
-        return any(term in text for term in count_terms)
+        return _contains_any(text, count_terms)
 
     def _matches_recent_jobs(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "jobs recientes",
                 "ultimos jobs",
                 "últimos jobs",
                 "listar jobs",
                 "lista de jobs",
                 "ver jobs",
-            )
+            ),
         )
 
     def _matches_job_status(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "estado del job",
                 "estado del ultimo job",
                 "status del job",
                 "resultado del job",
-            )
+            ),
         )
 
     def _matches_job_logs(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in ("logs", "bitacora", "historial de logs", "ver logs")
-        )
+        return _contains_any(text, ("logs", "bitacora", "historial de logs", "ver logs"))
 
     def _matches_settings(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in ("configuracion", "configuración", "settings", "ajustes")
-        )
+        return _contains_any(text, ("configuracion", "configuración", "settings", "ajustes"))
 
     def _matches_database_schema(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
+        return _contains_any(
+            text,
+            (
                 "que se puede consultar",
                 "qué se puede consultar",
                 "que tablas",
@@ -1026,19 +1007,13 @@ class IntentAgent:
                 "estructura de la base de datos",
                 "schema",
                 "esquema",
-            )
+            ),
         )
 
     def _matches_sql_query(self, text: str) -> bool:
-        return any(
-            phrase in text
-            for phrase in (
-                "sql",
-                "sentencia sql",
-                "consulta sql",
-                "query sql",
-                "haz un select",
-            )
+        return _contains_any(
+            text,
+            ("sql", "sentencia sql", "consulta sql", "query sql", "haz un select"),
         )
 
     def _matches_followup_query(self, text: str) -> bool:
@@ -1054,7 +1029,7 @@ class IntentAgent:
             "solo las",
             "y ahora",
         )
-        return any(term in text for term in followup_terms)
+        return _contains_any(text, followup_terms)
 
     def _infer_with_llm(
         self, messages: list[dict[str, str]], job_id: int | None, errors: int
@@ -1201,7 +1176,7 @@ Ultimo mensaje del usuario: {self._last_user_message(messages)}
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            match = _RE_JSON_OBJECT.search(cleaned)
             if match:
                 try:
                     return json.loads(match.group(0))
@@ -1222,7 +1197,7 @@ class PlanningAgent:
     def _last_user_message(self, messages: list[dict[str, str]]) -> str:
         for message in reversed(messages):
             if message.get("role") == "user":
-                return (message.get("content") or "").strip().lower()
+                return _normalize_text(message.get("content") or "")
         return ""
 
     def plan(
@@ -1446,7 +1421,7 @@ Conversacion:
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            match = _RE_JSON_OBJECT.search(cleaned)
             if match:
                 try:
                     return json.loads(match.group(0))
