@@ -29,4 +29,3 @@ class RequestIdMiddleware:
         except Exception:
             pass
         return response
-

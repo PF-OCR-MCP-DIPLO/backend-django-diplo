@@ -16,4 +16,3 @@ class StubTextLLMProvider(BaseLLMProvider):
                 "archivo_origen": archivo_origen,
             }
         ]
-

@@ -20,4 +20,3 @@ class ApiKeyPermission(BasePermission):
             return True
         provided = request.META.get(self.header_name, "") or ""
         return provided == expected
-

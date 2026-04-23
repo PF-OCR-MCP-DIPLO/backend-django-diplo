@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from apps.common.middleware.request_id import get_current_request_id
 
+
 @dataclass(frozen=True)
 class ApiError:
     code: str
