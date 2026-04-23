@@ -22,7 +22,12 @@ from apps.api.serializers import (
     ProcessingSettingsSerializer,
 )
 from apps.api.services.shared_tools import upload_document_from_path
-from apps.processing.models import ExtractedDeposit, ExtractionLog, ProcessRun, SourceImage
+from apps.processing.models import (
+    ExtractedDeposit,
+    ExtractionLog,
+    ProcessRun,
+    SourceImage,
+)
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.orchestrator import process_job
 from apps.processing.services.settings_service import (
@@ -94,7 +99,9 @@ class IntentAgent:
         "diciembre": 12,
     }
 
-    def __init__(self, model: str, timeout: int, provider: str, api_key: str = "") -> None:
+    def __init__(
+        self, model: str, timeout: int, provider: str, api_key: str = ""
+    ) -> None:
         self.model = model
         self.timeout = timeout
         self.provider = provider
@@ -109,7 +116,9 @@ class IntentAgent:
     ) -> AssistantIntent:
         last_user_message = self._last_user_message(messages)
         if not last_user_message:
-            return AssistantIntent(name="unknown", confidence=0.0, summary="Sin mensaje del usuario")
+            return AssistantIntent(
+                name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
+            )
 
         direct_intent = self._infer_direct_intent(
             last_user_message,
@@ -141,7 +150,9 @@ class IntentAgent:
         if transactions_intent is not None:
             return transactions_intent
 
-        if self._matches_followup_query(text) and isinstance(query_context.get("query"), dict):
+        if self._matches_followup_query(text) and isinstance(
+            query_context.get("query"), dict
+        ):
             return AssistantIntent(
                 name="followup_not_supported",
                 confidence=0.9,
@@ -257,12 +268,16 @@ class IntentAgent:
             "ultimo valor",
             "último valor",
         )
-        return any(term in text for term in value_terms) and any(term in text for term in record_terms)
+        return any(term in text for term in value_terms) and any(
+            term in text for term in record_terms
+        )
 
     def _matches_latest_records(self, text: str) -> bool:
         return (
             "registro" in text
-            and any(term in text for term in ("ultimos", "últimos", "recientes", "latest"))
+            and any(
+                term in text for term in ("ultimos", "últimos", "recientes", "latest")
+            )
             and not any(term in text for term in ("valor", "monto", "importe"))
         )
 
@@ -293,10 +308,23 @@ class IntentAgent:
         return 5
 
     def _infer_crud_intent(self, text: str) -> AssistantIntent | None:
-        if not any(term in text for term in ("transaccion", "transacción", "registro", "deposito", "depósito", "bd", "base de datos")):
+        if not any(
+            term in text
+            for term in (
+                "transaccion",
+                "transacción",
+                "registro",
+                "deposito",
+                "depósito",
+                "bd",
+                "base de datos",
+            )
+        ):
             return None
 
-        if any(term in text for term in ("crear", "crea", "inserta", "agrega", "registrar")):
+        if any(
+            term in text for term in ("crear", "crea", "inserta", "agrega", "registrar")
+        ):
             values: dict[str, Any] = {}
             reference = self._extract_reference_filter(text)
             if reference and isinstance(reference.get("value"), str):
@@ -306,15 +334,21 @@ class IntentAgent:
                 if item.get("op") == "eq":
                     values["valor"] = item.get("value")
 
-            process_run_match = re.search(r"(?:job|process_run(?:_id)?|proceso)\s*#?\s*(\d+)", text)
+            process_run_match = re.search(
+                r"(?:job|process_run(?:_id)?|proceso)\s*#?\s*(\d+)", text
+            )
             if process_run_match:
                 values["process_run_id"] = int(process_run_match.group(1))
 
-            source_image_match = re.search(r"(?:imagen|image|source_image(?:_id)?)\s*#?\s*(\d+)", text)
+            source_image_match = re.search(
+                r"(?:imagen|image|source_image(?:_id)?)\s*#?\s*(\d+)", text
+            )
             if source_image_match:
                 values["source_image_id"] = int(source_image_match.group(1))
 
-            sequence_match = re.search(r"(?:secuencia|sequence|indice|índice)\s*#?\s*(\d+)", text)
+            sequence_match = re.search(
+                r"(?:secuencia|sequence|indice|índice)\s*#?\s*(\d+)", text
+            )
             if sequence_match:
                 values["sequence_index"] = int(sequence_match.group(1))
 
@@ -330,13 +364,18 @@ class IntentAgent:
                 summary="Solicitud de creacion de registro",
             )
 
-        if any(term in text for term in ("actualiza", "actualizar", "editar", "modificar", "cambiar")):
+        if any(
+            term in text
+            for term in ("actualiza", "actualizar", "editar", "modificar", "cambiar")
+        ):
             filters: list[dict[str, Any]] = []
             values: dict[str, Any] = {}
 
             id_match = re.search(r"(?:id\s*#?|id:)\s*(\d+)", text)
             if id_match:
-                filters.append({"field": "id", "op": "eq", "value": int(id_match.group(1))})
+                filters.append(
+                    {"field": "id", "op": "eq", "value": int(id_match.group(1))}
+                )
 
             ref_filter = self._extract_reference_filter(text)
             if ref_filter is not None:
@@ -365,7 +404,9 @@ class IntentAgent:
             filters: list[dict[str, Any]] = []
             id_match = re.search(r"(?:id\s*#?|id:)\s*(\d+)", text)
             if id_match:
-                filters.append({"field": "id", "op": "eq", "value": int(id_match.group(1))})
+                filters.append(
+                    {"field": "id", "op": "eq", "value": int(id_match.group(1))}
+                )
 
             ref_filter = self._extract_reference_filter(text)
             if ref_filter is not None:
@@ -428,24 +469,35 @@ class IntentAgent:
 
         if self._is_total_sum_request(text):
             query["select"] = []
-            query["aggregations"] = [{"type": "sum", "field": "valor", "as": "total_valor"}]
+            query["aggregations"] = [
+                {"type": "sum", "field": "valor", "as": "total_valor"}
+            ]
             query.pop("order_by", None)
             query["limit"] = 1
 
         if self._is_average_request(text):
             query["select"] = []
-            query["aggregations"] = [{"type": "avg", "field": "valor", "as": "promedio_valor"}]
+            query["aggregations"] = [
+                {"type": "avg", "field": "valor", "as": "promedio_valor"}
+            ]
             query.pop("order_by", None)
             query["limit"] = 1
 
         if self._is_count_request(text):
             query["select"] = []
-            query["aggregations"] = [{"type": "count", "field": "id", "as": "total_transacciones"}]
+            query["aggregations"] = [
+                {"type": "count", "field": "id", "as": "total_transacciones"}
+            ]
             query.pop("order_by", None)
             query["limit"] = 1
 
         if self._is_references_only_request(text):
-            query["select"] = ["referencia", "valor", "fecha_consignacion", "created_at"]
+            query["select"] = [
+                "referencia",
+                "valor",
+                "fecha_consignacion",
+                "created_at",
+            ]
 
         if self._is_sort_by_amount_desc_request(text):
             query["order_by"] = [{"field": "valor", "direction": "desc"}]
@@ -514,7 +566,10 @@ class IntentAgent:
         )
         return any(term in text for term in transaction_terms) or (
             any(term in text for term in action_terms)
-            and any(token in text for token in ("$", "mes", "semana", "fecha", "abril", "enero", "marzo"))
+            and any(
+                token in text
+                for token in ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
+            )
         )
 
     def _has_explicit_limit_request(self, text: str) -> bool:
@@ -660,7 +715,9 @@ class IntentAgent:
                 filters.append({"field": "valor", "op": "lt", "value": amount})
                 break
 
-        near_match = re.search(r"(?:cercan[ao]s?\s+a|cerca\s+de)\s*\$?\s*([\d\.,]+)", text)
+        near_match = re.search(
+            r"(?:cercan[ao]s?\s+a|cerca\s+de)\s*\$?\s*([\d\.,]+)", text
+        )
         if near_match:
             amount = self._to_numeric_amount(near_match.group(1))
             if amount is not None:
@@ -705,15 +762,29 @@ class IntentAgent:
             start_date, end_date = range_dates
             filters.extend(
                 [
-                    {"field": "created_at", "op": "date_gte", "value": start_date.isoformat()},
-                    {"field": "created_at", "op": "date_lte", "value": end_date.isoformat()},
+                    {
+                        "field": "created_at",
+                        "op": "date_gte",
+                        "value": start_date.isoformat(),
+                    },
+                    {
+                        "field": "created_at",
+                        "op": "date_lte",
+                        "value": end_date.isoformat(),
+                    },
                 ]
             )
             return filters
 
         exact_date = self._extract_exact_spanish_date(text)
         if exact_date is not None:
-            filters.append({"field": "created_at", "op": "date_eq", "value": exact_date.isoformat()})
+            filters.append(
+                {
+                    "field": "created_at",
+                    "op": "date_eq",
+                    "value": exact_date.isoformat(),
+                }
+            )
             return filters
 
         if "ultimo mes" in text or "último mes" in text:
@@ -732,8 +803,16 @@ class IntentAgent:
             start = today.replace(day=1)
             filters.extend(
                 [
-                    {"field": "created_at", "op": "date_gte", "value": start.isoformat()},
-                    {"field": "created_at", "op": "date_lte", "value": today.isoformat()},
+                    {
+                        "field": "created_at",
+                        "op": "date_gte",
+                        "value": start.isoformat(),
+                    },
+                    {
+                        "field": "created_at",
+                        "op": "date_lte",
+                        "value": today.isoformat(),
+                    },
                 ]
             )
             return filters
@@ -742,8 +821,16 @@ class IntentAgent:
             start = today.replace(month=1, day=1)
             filters.extend(
                 [
-                    {"field": "created_at", "op": "date_gte", "value": start.isoformat()},
-                    {"field": "created_at", "op": "date_lte", "value": today.isoformat()},
+                    {
+                        "field": "created_at",
+                        "op": "date_gte",
+                        "value": start.isoformat(),
+                    },
+                    {
+                        "field": "created_at",
+                        "op": "date_lte",
+                        "value": today.isoformat(),
+                    },
                 ]
             )
             return filters
@@ -759,7 +846,11 @@ class IntentAgent:
                 end = date(year, month + 1, 1) - timedelta(days=1)
             filters.extend(
                 [
-                    {"field": "created_at", "op": "date_gte", "value": start.isoformat()},
+                    {
+                        "field": "created_at",
+                        "op": "date_gte",
+                        "value": start.isoformat(),
+                    },
                     {"field": "created_at", "op": "date_lte", "value": end.isoformat()},
                 ]
             )
@@ -796,8 +887,14 @@ class IntentAgent:
             text,
         )
         if explicit_days:
-            start_year = int(explicit_days.group(3)) if explicit_days.group(3) else timezone.localdate().year
-            end_year = int(explicit_days.group(6)) if explicit_days.group(6) else start_year
+            start_year = (
+                int(explicit_days.group(3))
+                if explicit_days.group(3)
+                else timezone.localdate().year
+            )
+            end_year = (
+                int(explicit_days.group(6)) if explicit_days.group(6) else start_year
+            )
             start_month = self._MONTHS[explicit_days.group(2)]
             end_month = self._MONTHS[explicit_days.group(5)]
             try:
@@ -816,7 +913,11 @@ class IntentAgent:
             text,
         )
         if months_range:
-            year = int(months_range.group(3)) if months_range.group(3) else timezone.localdate().year
+            year = (
+                int(months_range.group(3))
+                if months_range.group(3)
+                else timezone.localdate().year
+            )
             start_month = self._MONTHS[months_range.group(1)]
             end_month = self._MONTHS[months_range.group(2)]
             start = date(year, min(start_month, end_month), 1)
@@ -873,13 +974,27 @@ class IntentAgent:
         )
 
     def _matches_job_status(self, text: str) -> bool:
-        return any(phrase in text for phrase in ("estado del job", "estado del ultimo job", "status del job", "resultado del job"))
+        return any(
+            phrase in text
+            for phrase in (
+                "estado del job",
+                "estado del ultimo job",
+                "status del job",
+                "resultado del job",
+            )
+        )
 
     def _matches_job_logs(self, text: str) -> bool:
-        return any(phrase in text for phrase in ("logs", "bitacora", "historial de logs", "ver logs"))
+        return any(
+            phrase in text
+            for phrase in ("logs", "bitacora", "historial de logs", "ver logs")
+        )
 
     def _matches_settings(self, text: str) -> bool:
-        return any(phrase in text for phrase in ("configuracion", "configuración", "settings", "ajustes"))
+        return any(
+            phrase in text
+            for phrase in ("configuracion", "configuración", "settings", "ajustes")
+        )
 
     def _matches_database_schema(self, text: str) -> bool:
         return any(
@@ -924,7 +1039,9 @@ class IntentAgent:
         )
         return any(term in text for term in followup_terms)
 
-    def _infer_with_llm(self, messages: list[dict[str, str]], job_id: int | None, errors: int) -> AssistantIntent:
+    def _infer_with_llm(
+        self, messages: list[dict[str, str]], job_id: int | None, errors: int
+    ) -> AssistantIntent:
         prompt = f"""
 Eres un agente de intencion para un dashboard de procesamiento.
 
@@ -965,7 +1082,9 @@ Conversacion:
         raw_response = self._generate_text(prompt)
         payload = self._extract_json(raw_response)
         if not isinstance(payload, dict):
-            return AssistantIntent(name="unknown", confidence=0.0, summary="Clasificacion no disponible")
+            return AssistantIntent(
+                name="unknown", confidence=0.0, summary="Clasificacion no disponible"
+            )
 
         intent = str(payload.get("intent") or "unknown").strip()
         tool_hint = payload.get("tool_hint")
@@ -1022,7 +1141,9 @@ Conversacion:
                 "num_predict": 256,
             },
         }
-        response = requests.post(settings.OLLAMA_URL, json=payload, timeout=self.timeout)
+        response = requests.post(
+            settings.OLLAMA_URL, json=payload, timeout=self.timeout
+        )
         response.raise_for_status()
         data = response.json()
         return str(data.get("response", ""))
@@ -1039,7 +1160,9 @@ Conversacion:
             json=payload,
             headers={
                 "x-api-key": self.api_key,
-                "anthropic-version": getattr(settings, "ANTHROPIC_VERSION", "2023-06-01"),
+                "anthropic-version": getattr(
+                    settings, "ANTHROPIC_VERSION", "2023-06-01"
+                ),
                 "content-type": "application/json",
             },
             timeout=self.timeout,
@@ -1071,7 +1194,9 @@ Conversacion:
 
 
 class PlanningAgent:
-    def __init__(self, model: str, timeout: int, provider: str, api_key: str = "") -> None:
+    def __init__(
+        self, model: str, timeout: int, provider: str, api_key: str = ""
+    ) -> None:
         self.model = model
         self.timeout = timeout
         self.provider = provider
@@ -1088,21 +1213,32 @@ class PlanningAgent:
         safe_context = query_context or {}
         if intent.tool_hint:
             arguments = dict(intent.arguments)
-            if intent.tool_hint in {
-                "get_job_status",
-                "get_job_logs",
-                "get_last_record_value",
-                "get_completed_records_summary",
-                "query_database",
-                "process_job",
-                "export_job_excel",
-            } and "job_id" not in arguments and job_id is not None:
+            if (
+                intent.tool_hint
+                in {
+                    "get_job_status",
+                    "get_job_logs",
+                    "get_last_record_value",
+                    "get_completed_records_summary",
+                    "query_database",
+                    "process_job",
+                    "export_job_excel",
+                }
+                and "job_id" not in arguments
+                and job_id is not None
+            ):
                 arguments["job_id"] = job_id
             if intent.tool_hint == "query_database":
-                previous_query = safe_context.get("query") if isinstance(safe_context.get("query"), dict) else {}
+                previous_query = (
+                    safe_context.get("query")
+                    if isinstance(safe_context.get("query"), dict)
+                    else {}
+                )
                 query_candidate = arguments.get("query") or {}
                 if self._should_merge_query_context(query_candidate):
-                    arguments["query"] = self._merge_query_context(previous_query, query_candidate)
+                    arguments["query"] = self._merge_query_context(
+                        previous_query, query_candidate
+                    )
                 else:
                     arguments["query"] = query_candidate
             return AssistantPlan(
@@ -1193,7 +1329,12 @@ Conversacion:
         raw_response = self._generate_text(prompt)
         payload = self._extract_json(raw_response)
         if not isinstance(payload, dict):
-            return AssistantPlan(tool="none", arguments={}, intent_name=intent.name, intent_summary=intent.summary)
+            return AssistantPlan(
+                tool="none",
+                arguments={},
+                intent_name=intent.name,
+                intent_summary=intent.summary,
+            )
 
         tool = str(payload.get("tool") or "none").strip()
         if tool not in _ALLOWED_TOOLS:
@@ -1202,22 +1343,33 @@ Conversacion:
         arguments = payload.get("arguments") or {}
         if not isinstance(arguments, dict):
             arguments = {}
-        if tool in {
-            "get_job_status",
-            "get_job_logs",
-            "get_last_record_value",
-            "query_database",
-            "crud_database",
-            "process_job",
-            "export_job_excel",
-        } and "job_id" not in arguments and job_id is not None:
+        if (
+            tool
+            in {
+                "get_job_status",
+                "get_job_logs",
+                "get_last_record_value",
+                "query_database",
+                "crud_database",
+                "process_job",
+                "export_job_excel",
+            }
+            and "job_id" not in arguments
+            and job_id is not None
+        ):
             arguments["job_id"] = job_id
 
         if tool == "query_database":
-            previous_query = safe_context.get("query") if isinstance(safe_context.get("query"), dict) else {}
+            previous_query = (
+                safe_context.get("query")
+                if isinstance(safe_context.get("query"), dict)
+                else {}
+            )
             query_candidate = arguments.get("query") or {}
             if self._should_merge_query_context(query_candidate):
-                arguments["query"] = self._merge_query_context(previous_query, query_candidate)
+                arguments["query"] = self._merge_query_context(
+                    previous_query, query_candidate
+                )
             else:
                 arguments["query"] = query_candidate
 
@@ -1228,19 +1380,41 @@ Conversacion:
             intent_summary=intent.summary,
         )
 
-    def _merge_query_context(self, previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    def _merge_query_context(
+        self, previous: dict[str, Any], current: dict[str, Any]
+    ) -> dict[str, Any]:
         merged: dict[str, Any] = {
             "source": current.get("source") or previous.get("source") or "process_runs",
-            "select": current.get("select") if isinstance(current.get("select"), list) else previous.get("select", []),
+            "select": (
+                current.get("select")
+                if isinstance(current.get("select"), list)
+                else previous.get("select", [])
+            ),
             "filters": [],
-            "aggregations": current.get("aggregations") if isinstance(current.get("aggregations"), list) else previous.get("aggregations", []),
-            "group_by": current.get("group_by") if isinstance(current.get("group_by"), list) else previous.get("group_by", []),
-            "order_by": current.get("order_by") if isinstance(current.get("order_by"), list) else previous.get("order_by", []),
+            "aggregations": (
+                current.get("aggregations")
+                if isinstance(current.get("aggregations"), list)
+                else previous.get("aggregations", [])
+            ),
+            "group_by": (
+                current.get("group_by")
+                if isinstance(current.get("group_by"), list)
+                else previous.get("group_by", [])
+            ),
+            "order_by": (
+                current.get("order_by")
+                if isinstance(current.get("order_by"), list)
+                else previous.get("order_by", [])
+            ),
             "limit": current.get("limit") or previous.get("limit") or 30,
         }
 
-        previous_filters = previous.get("filters") if isinstance(previous.get("filters"), list) else []
-        current_filters = current.get("filters") if isinstance(current.get("filters"), list) else []
+        previous_filters = (
+            previous.get("filters") if isinstance(previous.get("filters"), list) else []
+        )
+        current_filters = (
+            current.get("filters") if isinstance(current.get("filters"), list) else []
+        )
         merged["filters"] = [*previous_filters, *current_filters]
 
         if not merged["select"] and not merged["aggregations"]:
@@ -1269,7 +1443,9 @@ Conversacion:
                 "num_predict": 256,
             },
         }
-        response = requests.post(settings.OLLAMA_URL, json=payload, timeout=self.timeout)
+        response = requests.post(
+            settings.OLLAMA_URL, json=payload, timeout=self.timeout
+        )
         response.raise_for_status()
         data = response.json()
         return str(data.get("response", ""))
@@ -1286,7 +1462,9 @@ Conversacion:
             json=payload,
             headers={
                 "x-api-key": self.api_key,
-                "anthropic-version": getattr(settings, "ANTHROPIC_VERSION", "2023-06-01"),
+                "anthropic-version": getattr(
+                    settings, "ANTHROPIC_VERSION", "2023-06-01"
+                ),
                 "content-type": "application/json",
             },
             timeout=self.timeout,
@@ -1465,7 +1643,9 @@ class ToolExecutionAgent:
 
         if plan.tool == "list_jobs":
             jobs = ProcessRun.objects.order_by("-created_at")[:5]
-            return ProcessRunListSerializer(jobs, many=True, context={"request": None}).data
+            return ProcessRunListSerializer(
+                jobs, many=True, context={"request": None}
+            ).data
 
         resolved_job_id = plan.arguments.get("job_id", job_id)
         if resolved_job_id is not None:
@@ -1477,36 +1657,49 @@ class ToolExecutionAgent:
         if plan.tool == "get_job_status":
             if resolved_job_id is None:
                 return {"detail": "job_id is required"}
-            job = ProcessRun.objects.prefetch_related("source_images__deposits").get(pk=resolved_job_id)
+            job = ProcessRun.objects.prefetch_related("source_images__deposits").get(
+                pk=resolved_job_id
+            )
             return ProcessRunDetailSerializer(job, context={"request": None}).data
 
         if plan.tool == "get_job_logs":
             if resolved_job_id is None:
                 return {"detail": "job_id is required"}
             job = ProcessRun.objects.get(pk=resolved_job_id)
-            logs = job.extraction_logs.select_related("source_image").order_by("sequence_index", "id")
+            logs = job.extraction_logs.select_related("source_image").order_by(
+                "sequence_index", "id"
+            )
             return ExtractionLogSerializer(logs, many=True).data
 
         if plan.tool == "get_last_record_value":
             candidate_job = None
             if resolved_job_id is not None:
                 candidate_job = (
-                    ProcessRun.objects.prefetch_related("source_images__deposits", "deposits")
+                    ProcessRun.objects.prefetch_related(
+                        "source_images__deposits", "deposits"
+                    )
                     .filter(pk=resolved_job_id)
                     .first()
                 )
             if candidate_job is None:
                 candidate_job = (
-                    ProcessRun.objects.prefetch_related("source_images__deposits", "deposits")
+                    ProcessRun.objects.prefetch_related(
+                        "source_images__deposits", "deposits"
+                    )
                     .filter(
-                        status__in=[ProcessRun.Status.COMPLETED, ProcessRun.Status.COMPLETED_WITH_ERRORS],
+                        status__in=[
+                            ProcessRun.Status.COMPLETED,
+                            ProcessRun.Status.COMPLETED_WITH_ERRORS,
+                        ],
                         total_records__gt=0,
                     )
                     .order_by("-created_at")
                     .first()
                 )
             if candidate_job is None:
-                return {"detail": "No hay jobs completados con registros para calcular el ultimo valor."}
+                return {
+                    "detail": "No hay jobs completados con registros para calcular el ultimo valor."
+                }
 
             deposit = candidate_job.deposits.order_by("-sequence_index", "-id").first()
             if deposit is None:
@@ -1527,15 +1720,15 @@ class ToolExecutionAgent:
             }
 
         if plan.tool == "get_completed_records_summary":
-            summary = (
-                ProcessRun.objects.filter(
-                    status__in=[ProcessRun.Status.COMPLETED, ProcessRun.Status.COMPLETED_WITH_ERRORS]
-                )
-                .aggregate(
-                    total_records=Count("deposits"),
-                    total_value=Sum("deposits__valor"),
-                    jobs_count=Count("id", distinct=True),
-                )
+            summary = ProcessRun.objects.filter(
+                status__in=[
+                    ProcessRun.Status.COMPLETED,
+                    ProcessRun.Status.COMPLETED_WITH_ERRORS,
+                ]
+            ).aggregate(
+                total_records=Count("deposits"),
+                total_value=Sum("deposits__valor"),
+                jobs_count=Count("id", distinct=True),
             )
             return {
                 "jobs_count": int(summary.get("jobs_count") or 0),
@@ -1545,14 +1738,18 @@ class ToolExecutionAgent:
             }
 
         if plan.tool == "get_processing_settings":
-            return ProcessingSettingsSerializer(get_or_create_processing_settings()).data
+            return ProcessingSettingsSerializer(
+                get_or_create_processing_settings()
+            ).data
 
         if plan.tool == "get_processing_settings_options":
             return available_options()
 
         if plan.tool == "update_processing_settings":
             instance = get_or_create_processing_settings()
-            serializer = ProcessingSettingsSerializer(instance, data=plan.arguments, partial=True)
+            serializer = ProcessingSettingsSerializer(
+                instance, data=plan.arguments, partial=True
+            )
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return serializer.data
@@ -1562,7 +1759,9 @@ class ToolExecutionAgent:
                 return {"detail": "job_id is required"}
             job = ProcessRun.objects.get(pk=resolved_job_id)
             processed = process_job(job)
-            processed = ProcessRun.objects.prefetch_related("source_images__deposits").get(pk=processed.pk)
+            processed = ProcessRun.objects.prefetch_related(
+                "source_images__deposits"
+            ).get(pk=processed.pk)
             return ProcessRunDetailSerializer(processed, context={"request": None}).data
 
         if plan.tool == "export_job_excel":
@@ -1606,17 +1805,33 @@ class ToolExecutionAgent:
                 return self._execute_query_database(query)
             query_from_filters = {
                 "source": source,
-                "select": [field for field in ("id", "created_at") if field in allowed_fields],
-                "filters": arguments.get("filters") if isinstance(arguments.get("filters"), list) else [],
-                "order_by": arguments.get("order_by") if isinstance(arguments.get("order_by"), list) else [],
+                "select": [
+                    field for field in ("id", "created_at") if field in allowed_fields
+                ],
+                "filters": (
+                    arguments.get("filters")
+                    if isinstance(arguments.get("filters"), list)
+                    else []
+                ),
+                "order_by": (
+                    arguments.get("order_by")
+                    if isinstance(arguments.get("order_by"), list)
+                    else []
+                ),
                 "limit": arguments.get("limit", 30),
             }
             return self._execute_query_database(query_from_filters)
 
         if operation == "create":
-            values = arguments.get("values") if isinstance(arguments.get("values"), dict) else {}
+            values = (
+                arguments.get("values")
+                if isinstance(arguments.get("values"), dict)
+                else {}
+            )
             if not values:
-                return {"detail": "create requiere arguments.values con campos a crear."}
+                return {
+                    "detail": "create requiere arguments.values con campos a crear."
+                }
             writable = self._model_writable_fields(model)
             payload = {k: v for k, v in values.items() if k in writable}
             if not payload:
@@ -1630,16 +1845,29 @@ class ToolExecutionAgent:
                     "data": self._serialize_model_instance(instance, allowed_fields),
                 }
             except Exception as exc:
-                return {"detail": "No fue posible crear el registro.", "meta": {"error": exc.__class__.__name__, "message": str(exc)}}
+                return {
+                    "detail": "No fue posible crear el registro.",
+                    "meta": {"error": exc.__class__.__name__, "message": str(exc)},
+                }
 
         queryset = model.objects.all()
-        filters = arguments.get("filters") if isinstance(arguments.get("filters"), list) else []
+        filters = (
+            arguments.get("filters")
+            if isinstance(arguments.get("filters"), list)
+            else []
+        )
         filtered, warnings = self._apply_crud_filters(queryset, filters, allowed_fields)
 
         if operation == "update":
-            values = arguments.get("values") if isinstance(arguments.get("values"), dict) else {}
+            values = (
+                arguments.get("values")
+                if isinstance(arguments.get("values"), dict)
+                else {}
+            )
             if not values:
-                return {"detail": "update requiere arguments.values con campos a actualizar."}
+                return {
+                    "detail": "update requiere arguments.values con campos a actualizar."
+                }
             writable = self._model_writable_fields(model)
             payload = {k: v for k, v in values.items() if k in writable}
             if not payload:
@@ -1653,7 +1881,10 @@ class ToolExecutionAgent:
                     "warnings": warnings,
                 }
             except Exception as exc:
-                return {"detail": "No fue posible actualizar registros.", "meta": {"error": exc.__class__.__name__, "message": str(exc)}}
+                return {
+                    "detail": "No fue posible actualizar registros.",
+                    "meta": {"error": exc.__class__.__name__, "message": str(exc)},
+                }
 
         try:
             deleted_count, _ = filtered.delete()
@@ -1664,7 +1895,10 @@ class ToolExecutionAgent:
                 "warnings": warnings,
             }
         except Exception as exc:
-            return {"detail": "No fue posible eliminar registros.", "meta": {"error": exc.__class__.__name__, "message": str(exc)}}
+            return {
+                "detail": "No fue posible eliminar registros.",
+                "meta": {"error": exc.__class__.__name__, "message": str(exc)},
+            }
 
     def _model_writable_fields(self, model: Any) -> set[str]:
         blocked = {"id", "created_at", "updated_at"}
@@ -1679,7 +1913,9 @@ class ToolExecutionAgent:
                 writable.add(field.attname)
         return writable
 
-    def _serialize_model_instance(self, instance: Any, allowed_fields: set[str]) -> dict[str, Any]:
+    def _serialize_model_instance(
+        self, instance: Any, allowed_fields: set[str]
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"id": instance.pk}
         for field in sorted(allowed_fields):
             if "__" in field:
@@ -1690,7 +1926,9 @@ class ToolExecutionAgent:
                 continue
         return payload
 
-    def _apply_crud_filters(self, queryset: Any, filters: list[dict[str, Any]], allowed_fields: set[str]) -> tuple[Any, list[str]]:
+    def _apply_crud_filters(
+        self, queryset: Any, filters: list[dict[str, Any]], allowed_fields: set[str]
+    ) -> tuple[Any, list[str]]:
         warnings: list[str] = []
         for item in filters:
             if not isinstance(item, dict):
@@ -1725,7 +1963,9 @@ class ToolExecutionAgent:
                 elif op in {"date_eq", "date_gte", "date_lte"}:
                     parsed = self._parse_date_value(value)
                     if parsed is None:
-                        warnings.append(f"Filtro omitido: fecha invalida para '{field}'.")
+                        warnings.append(
+                            f"Filtro omitido: fecha invalida para '{field}'."
+                        )
                         continue
                     lookup = {
                         "date_eq": f"{field}__date",
@@ -1740,7 +1980,9 @@ class ToolExecutionAgent:
                 else:
                     warnings.append(f"Filtro omitido: operador no soportado '{op}'.")
             except Exception as exc:
-                warnings.append(f"Filtro omitido por error '{exc.__class__.__name__}' en '{field}'.")
+                warnings.append(
+                    f"Filtro omitido por error '{exc.__class__.__name__}' en '{field}'."
+                )
         return queryset, warnings
 
     def _execute_query_database(self, query: Any) -> dict[str, Any]:
@@ -1790,7 +2032,9 @@ class ToolExecutionAgent:
                 elif op == "lte":
                     queryset = queryset.filter(**{f"{field}__lte": value})
                 elif op == "between" and isinstance(value, list) and len(value) == 2:
-                    queryset = queryset.filter(**{f"{field}__range": [value[0], value[1]]})
+                    queryset = queryset.filter(
+                        **{f"{field}__range": [value[0], value[1]]}
+                    )
                 elif op == "contains" and isinstance(value, str):
                     queryset = queryset.filter(**{f"{field}__contains": value})
                 elif op == "icontains" and isinstance(value, str):
@@ -1839,7 +2083,11 @@ class ToolExecutionAgent:
                 )
 
         # Aggregations
-        aggregations = query.get("aggregations") if isinstance(query.get("aggregations"), list) else []
+        aggregations = (
+            query.get("aggregations")
+            if isinstance(query.get("aggregations"), list)
+            else []
+        )
         aggregate_expressions: dict[str, Any] = {}
         for item in aggregations:
             if not isinstance(item, dict):
@@ -1869,27 +2117,49 @@ class ToolExecutionAgent:
                 warnings.append(f"Agregacion omitida: tipo no soportado '{agg_type}'.")
 
         # Group by
-        group_by_raw = query.get("group_by") if isinstance(query.get("group_by"), list) else []
-        group_by = [str(field).strip() for field in group_by_raw if str(field).strip() in allowed_fields]
+        group_by_raw = (
+            query.get("group_by") if isinstance(query.get("group_by"), list) else []
+        )
+        group_by = [
+            str(field).strip()
+            for field in group_by_raw
+            if str(field).strip() in allowed_fields
+        ]
         if isinstance(query.get("group_by"), list):
             for raw_field in query.get("group_by") or []:
                 normalized = str(raw_field).strip()
                 if normalized and normalized not in allowed_fields:
-                    warnings.append(f"group_by omitido: campo no permitido '{normalized}'.")
+                    warnings.append(
+                        f"group_by omitido: campo no permitido '{normalized}'."
+                    )
 
         # Select and limit
-        select_raw = query.get("select") if isinstance(query.get("select"), list) else []
-        select_fields = [str(field).strip() for field in select_raw if str(field).strip() in allowed_fields]
+        select_raw = (
+            query.get("select") if isinstance(query.get("select"), list) else []
+        )
+        select_fields = [
+            str(field).strip()
+            for field in select_raw
+            if str(field).strip() in allowed_fields
+        ]
         for raw_field in select_raw:
             normalized = str(raw_field).strip()
             if normalized and normalized not in allowed_fields:
                 warnings.append(f"select omitido: campo no permitido '{normalized}'.")
         if not select_fields and not aggregate_expressions:
-            select_fields = [field for field in ("id", "created_at") if field in allowed_fields]
+            select_fields = [
+                field for field in ("id", "created_at") if field in allowed_fields
+            ]
             if source == "process_runs":
                 select_fields = [
                     field
-                    for field in ("id", "original_filename", "status", "total_records", "created_at")
+                    for field in (
+                        "id",
+                        "original_filename",
+                        "status",
+                        "total_records",
+                        "created_at",
+                    )
                     if field in allowed_fields
                 ]
 
@@ -1900,7 +2170,9 @@ class ToolExecutionAgent:
         limit = max(1, min(limit, 200))
 
         # Order by
-        order_by_raw = query.get("order_by") if isinstance(query.get("order_by"), list) else []
+        order_by_raw = (
+            query.get("order_by") if isinstance(query.get("order_by"), list) else []
+        )
         order_by_fields: list[str] = []
         orderable_fields = set(allowed_fields)
         orderable_fields.update(aggregate_expressions.keys())
@@ -1966,7 +2238,9 @@ class ToolExecutionAgent:
                     "source": source_name,
                     "select": fields[: min(4, len(fields))],
                     "filters": [],
-                    "order_by": [{"field": fields[0], "direction": "desc"}] if fields else [],
+                    "order_by": (
+                        [{"field": fields[0], "direction": "desc"}] if fields else []
+                    ),
                     "limit": 20,
                 },
             }
@@ -1982,8 +2256,12 @@ class ToolExecutionAgent:
     def _sql_tables_catalog(self) -> dict[str, Any]:
         return {
             ProcessRun._meta.db_table: sorted(_QUERY_SOURCES["process_runs"]["fields"]),
-            ExtractedDeposit._meta.db_table: sorted(_QUERY_SOURCES["deposits"]["fields"]),
-            SourceImage._meta.db_table: sorted(_QUERY_SOURCES["source_images"]["fields"]),
+            ExtractedDeposit._meta.db_table: sorted(
+                _QUERY_SOURCES["deposits"]["fields"]
+            ),
+            SourceImage._meta.db_table: sorted(
+                _QUERY_SOURCES["source_images"]["fields"]
+            ),
             ExtractionLog._meta.db_table: sorted(_QUERY_SOURCES["logs"]["fields"]),
         }
 
@@ -2050,7 +2328,9 @@ class ToolExecutionAgent:
         normalized = stripped.lower()
 
         if not normalized.startswith("select") and not normalized.startswith("with"):
-            return "Solo se permiten consultas SQL de lectura (SELECT o WITH ... SELECT)."
+            return (
+                "Solo se permiten consultas SQL de lectura (SELECT o WITH ... SELECT)."
+            )
 
         if ";" in stripped:
             return "No se permiten multiples sentencias SQL en una sola consulta."
@@ -2071,7 +2351,9 @@ class ToolExecutionAgent:
         ]
         for pattern in forbidden_patterns:
             if re.search(pattern, normalized):
-                return "La sentencia contiene operaciones no permitidas para modo lectura."
+                return (
+                    "La sentencia contiene operaciones no permitidas para modo lectura."
+                )
 
         return None
 
@@ -2097,7 +2379,9 @@ class ToolExecutionAgent:
 
 
 class ResponseAgent:
-    def __init__(self, model: str, timeout: int, provider: str, api_key: str = "") -> None:
+    def __init__(
+        self, model: str, timeout: int, provider: str, api_key: str = ""
+    ) -> None:
         self.model = model
         self.timeout = timeout
         self.provider = provider
@@ -2135,7 +2419,11 @@ class ResponseAgent:
             return f"Encontré {len(tool_payload)} jobs recientes. Te los muestro en tarjetas en la interfaz."
 
         if plan.tool == "describe_database_schema" and isinstance(tool_payload, dict):
-            sources = tool_payload.get("sources") if isinstance(tool_payload.get("sources"), dict) else {}
+            sources = (
+                tool_payload.get("sources")
+                if isinstance(tool_payload.get("sources"), dict)
+                else {}
+            )
             return (
                 f"Puedo consultar {len(sources)} fuentes de datos. "
                 "Te muestro tablas/campos disponibles y ejemplo de consulta para cada una."
@@ -2158,7 +2446,9 @@ class ResponseAgent:
             rows_count = meta.get("rows_count", 0)
             return f"Ejecuté la sentencia SQL en modo lectura y obtuve {rows_count} resultado(s)."
 
-        if plan.tool == "get_completed_records_summary" and isinstance(tool_payload, dict):
+        if plan.tool == "get_completed_records_summary" and isinstance(
+            tool_payload, dict
+        ):
             detail = tool_payload.get("detail")
             if detail:
                 return str(detail)
@@ -2221,7 +2511,9 @@ Instrucciones:
                 "num_predict": 256,
             },
         }
-        response = requests.post(settings.OLLAMA_URL, json=payload, timeout=self.timeout)
+        response = requests.post(
+            settings.OLLAMA_URL, json=payload, timeout=self.timeout
+        )
         response.raise_for_status()
         data = response.json()
         return str(data.get("response", ""))
@@ -2238,7 +2530,9 @@ Instrucciones:
             json=payload,
             headers={
                 "x-api-key": self.api_key,
-                "anthropic-version": getattr(settings, "ANTHROPIC_VERSION", "2023-06-01"),
+                "anthropic-version": getattr(
+                    settings, "ANTHROPIC_VERSION", "2023-06-01"
+                ),
                 "content-type": "application/json",
             },
             timeout=self.timeout,
@@ -2274,10 +2568,16 @@ class AssistantAgent:
         self.timeout = settings.OLLAMA_TIMEOUT
         self.provider = "ollama"
         self.api_key = ""
-        self.intent_agent = IntentAgent(self.model, self.timeout, self.provider, self.api_key)
-        self.planner_agent = PlanningAgent(self.model, self.timeout, self.provider, self.api_key)
+        self.intent_agent = IntentAgent(
+            self.model, self.timeout, self.provider, self.api_key
+        )
+        self.planner_agent = PlanningAgent(
+            self.model, self.timeout, self.provider, self.api_key
+        )
         self.tool_agent = ToolExecutionAgent()
-        self.response_agent = ResponseAgent(self.model, self.timeout, self.provider, self.api_key)
+        self.response_agent = ResponseAgent(
+            self.model, self.timeout, self.provider, self.api_key
+        )
 
     def _sync_runtime_model(self) -> None:
         runtime = get_runtime_config()
@@ -2337,9 +2637,13 @@ class AssistantAgent:
                 errors=errors,
             )
             next_context = safe_context
-            if plan.tool == "query_database" and isinstance(plan.arguments.get("query"), dict):
+            if plan.tool == "query_database" and isinstance(
+                plan.arguments.get("query"), dict
+            ):
                 next_context = {"query": plan.arguments["query"]}
-            elif plan.tool == "query_database_sql" and isinstance(plan.arguments.get("sql"), str):
+            elif plan.tool == "query_database_sql" and isinstance(
+                plan.arguments.get("sql"), str
+            ):
                 next_context = {
                     "sql": plan.arguments.get("sql"),
                     "limit": plan.arguments.get("limit", 100),
