@@ -235,3 +235,33 @@ class AssistantChatSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Each message content must be a string.")
             cleaned.append({"role": role, "content": content})
         return cleaned
+
+
+class BulkDepositCorrectionItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField(min_value=1)
+    fecha_consignacion = serializers.CharField(allow_blank=True, required=False)
+    hora_consignacion = serializers.CharField(allow_blank=True, required=False)
+    referencia = serializers.CharField()
+    valor = serializers.DecimalField(max_digits=14, decimal_places=2)
+
+    def validate(self, attrs):
+        payload = {
+            "fecha_consignacion": attrs.get("fecha_consignacion") or None,
+            "hora_consignacion": attrs.get("hora_consignacion") or None,
+            "referencia": attrs.get("referencia"),
+            "valor": attrs.get("valor"),
+        }
+        try:
+            normalized = ConsignacionBasica.model_validate(payload)
+        except PydanticValidationError as error:
+            raise serializers.ValidationError({"item": error.errors()}) from error
+
+        attrs["fecha_consignacion"] = normalized.fecha_consignacion or ""
+        attrs["hora_consignacion"] = normalized.hora_consignacion or ""
+        attrs["referencia"] = normalized.referencia
+        attrs["valor"] = Decimal(str(normalized.valor)).quantize(Decimal("0.01"))
+        return attrs
+
+
+class BulkDepositCorrectionSerializer(serializers.Serializer):
+    items = BulkDepositCorrectionItemSerializer(many=True, allow_empty=False)
