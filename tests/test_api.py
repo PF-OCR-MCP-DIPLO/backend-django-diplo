@@ -1,9 +1,9 @@
 import base64
 import io
-import requests
 import zipfile
 from unittest.mock import patch
 
+import requests
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test.utils import override_settings
@@ -638,7 +638,9 @@ class AssistantChatApiTests(TestCase):
         self.client = APIClient()
 
     def test_chat_endpoint_accepts_frontend_contract(self):
-        with patch("apps.api.views.AssistantAgent") as mocked_agent_class:
+        with patch(
+            "apps.api.services.assistant_chat.AssistantAgent"
+        ) as mocked_agent_class:
             mocked_agent = mocked_agent_class.return_value
             mocked_agent.answer.return_value = {
                 "reply": "Consulta lista.",
@@ -670,7 +672,9 @@ class AssistantChatApiTests(TestCase):
         )
 
     def test_chat_endpoint_accepts_job_id_camel_alias(self):
-        with patch("apps.api.views.AssistantAgent") as mocked_agent_class:
+        with patch(
+            "apps.api.services.assistant_chat.AssistantAgent"
+        ) as mocked_agent_class:
             mocked_agent = mocked_agent_class.return_value
             mocked_agent.answer.return_value = {
                 "reply": "Estado consultado.",
@@ -724,7 +728,9 @@ class AssistantChatApiTests(TestCase):
         self.assertIn("job_id", payload["error"]["details"])
 
     def test_chat_endpoint_returns_controlled_unavailable_response(self):
-        with patch("apps.api.views.AssistantAgent") as mocked_agent_class:
+        with patch(
+            "apps.api.services.assistant_chat.AssistantAgent"
+        ) as mocked_agent_class:
             mocked_agent = mocked_agent_class.return_value
             mocked_agent.answer.return_value = {
                 "reply": "El asistente no esta disponible temporalmente.",
@@ -743,6 +749,23 @@ class AssistantChatApiTests(TestCase):
         self.assertEqual(payload["tool"], "none")
         self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
         self.assertEqual(payload["query_context"], {})
+
+    def test_chat_endpoint_handles_missing_job_without_stack_trace(self):
+        response = self.client.post(
+            "/api/assistant/chat/",
+            {
+                "messages": [{"role": "user", "content": "estado del job"}],
+                "job_id": 999999,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["tool"], "none")
+        self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
+        self.assertNotIn("Traceback", payload["reply"])
+        self.assertNotIn("Traceback", str(payload["data"]))
 
     def test_chat_endpoint_cors_allows_frontend_api_key_header(self):
         response = self.client.options(

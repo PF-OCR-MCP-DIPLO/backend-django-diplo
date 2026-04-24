@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import date, timedelta
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
-import requests
 from django.conf import settings
 from django.db import connection
 from django.db.models import Avg, Count, Max, Min, Sum
@@ -17,10 +16,11 @@ from django.utils.timezone import is_aware
 
 from apps.api.serializers import (
     ExtractionLogSerializer,
+    ProcessingSettingsSerializer,
     ProcessRunDetailSerializer,
     ProcessRunListSerializer,
-    ProcessingSettingsSerializer,
 )
+from apps.api.services.assistant_llm import AssistantTextClient, TextGenerationConfig
 from apps.api.services.shared_tools import upload_document_from_path
 from apps.processing.models import (
     ExtractedDeposit,
@@ -115,12 +115,18 @@ class IntentAgent:
     }
 
     def __init__(
-        self, model: str, timeout: int, provider: str, api_key: str = ""
+        self,
+        model: str,
+        timeout: int,
+        provider: str,
+        api_key: str = "",
+        text_client: AssistantTextClient | None = None,
     ) -> None:
         self.model = model
         self.timeout = timeout
         self.provider = provider
         self.api_key = api_key
+        self.text_client = text_client or AssistantTextClient()
 
     def infer(
         self,
@@ -1134,54 +1140,17 @@ Ultimo mensaje del usuario: {self._last_user_message(messages)}
         return "\n".join(lines)
 
     def _generate_text(self, prompt: str) -> str:
-        if self.provider == "anthropic":
-            return self._anthropic_generate(prompt)
-        return self._ollama_generate(prompt)
-
-    def _ollama_generate(self, prompt: str) -> str:
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.1,
-                "num_predict": 256,
-            },
-        }
-        response = requests.post(
-            settings.OLLAMA_URL, json=payload, timeout=self.timeout
+        return self.text_client.generate(
+            prompt,
+            TextGenerationConfig(
+                provider=self.provider,
+                model=self.model,
+                timeout=self.timeout,
+                api_key=self.api_key,
+                temperature=0.1,
+                num_predict=256,
+            ),
         )
-        response.raise_for_status()
-        data = response.json()
-        return str(data.get("response", ""))
-
-    def _anthropic_generate(self, prompt: str) -> str:
-        payload = {
-            "model": self.model,
-            "max_tokens": 1024,
-            "temperature": 0.1,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        response = requests.post(
-            getattr(settings, "ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"),
-            json=payload,
-            headers={
-                "x-api-key": self.api_key,
-                "anthropic-version": getattr(
-                    settings, "ANTHROPIC_VERSION", "2023-06-01"
-                ),
-                "content-type": "application/json",
-            },
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = data.get("content") or []
-        if content and isinstance(content, list):
-            first_item = content[0] or {}
-            if isinstance(first_item, dict):
-                return str(first_item.get("text", ""))
-        return str(data.get("text", ""))
 
     def _extract_json(self, text: str) -> Any:
         cleaned = text.strip()
@@ -1202,12 +1171,18 @@ Ultimo mensaje del usuario: {self._last_user_message(messages)}
 
 class PlanningAgent:
     def __init__(
-        self, model: str, timeout: int, provider: str, api_key: str = ""
+        self,
+        model: str,
+        timeout: int,
+        provider: str,
+        api_key: str = "",
+        text_client: AssistantTextClient | None = None,
     ) -> None:
         self.model = model
         self.timeout = timeout
         self.provider = provider
         self.api_key = api_key
+        self.text_client = text_client or AssistantTextClient()
 
     def _last_user_message(self, messages: list[dict[str, str]]) -> str:
         for message in reversed(messages):
@@ -1370,54 +1345,17 @@ Conversacion:
         )
 
     def _generate_text(self, prompt: str) -> str:
-        if self.provider == "anthropic":
-            return self._anthropic_generate(prompt)
-        return self._ollama_generate(prompt)
-
-    def _ollama_generate(self, prompt: str) -> str:
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.15,
-                "num_predict": 256,
-            },
-        }
-        response = requests.post(
-            settings.OLLAMA_URL, json=payload, timeout=self.timeout
+        return self.text_client.generate(
+            prompt,
+            TextGenerationConfig(
+                provider=self.provider,
+                model=self.model,
+                timeout=self.timeout,
+                api_key=self.api_key,
+                temperature=0.15,
+                num_predict=256,
+            ),
         )
-        response.raise_for_status()
-        data = response.json()
-        return str(data.get("response", ""))
-
-    def _anthropic_generate(self, prompt: str) -> str:
-        payload = {
-            "model": self.model,
-            "max_tokens": 1024,
-            "temperature": 0.15,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        response = requests.post(
-            getattr(settings, "ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"),
-            json=payload,
-            headers={
-                "x-api-key": self.api_key,
-                "anthropic-version": getattr(
-                    settings, "ANTHROPIC_VERSION", "2023-06-01"
-                ),
-                "content-type": "application/json",
-            },
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = data.get("content") or []
-        if content and isinstance(content, list):
-            first_item = content[0] or {}
-            if isinstance(first_item, dict):
-                return str(first_item.get("text", ""))
-        return str(data.get("text", ""))
 
     def _format_conversation(self, messages: list[dict[str, str]]) -> str:
         lines: list[str] = []
@@ -2321,12 +2259,18 @@ class ToolExecutionAgent:
 
 class ResponseAgent:
     def __init__(
-        self, model: str, timeout: int, provider: str, api_key: str = ""
+        self,
+        model: str,
+        timeout: int,
+        provider: str,
+        api_key: str = "",
+        text_client: AssistantTextClient | None = None,
     ) -> None:
         self.model = model
         self.timeout = timeout
         self.provider = provider
         self.api_key = api_key
+        self.text_client = text_client or AssistantTextClient()
 
     def _last_user_message(self, messages: list[dict[str, str]]) -> str:
         for message in reversed(messages):
@@ -2453,54 +2397,17 @@ Instrucciones:
         return response.strip() or "No pude generar una respuesta en este momento."
 
     def _generate_text(self, prompt: str) -> str:
-        if self.provider == "anthropic":
-            return self._anthropic_generate(prompt)
-        return self._ollama_generate(prompt)
-
-    def _ollama_generate(self, prompt: str) -> str:
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 256,
-            },
-        }
-        response = requests.post(
-            settings.OLLAMA_URL, json=payload, timeout=self.timeout
+        return self.text_client.generate(
+            prompt,
+            TextGenerationConfig(
+                provider=self.provider,
+                model=self.model,
+                timeout=self.timeout,
+                api_key=self.api_key,
+                temperature=0.2,
+                num_predict=256,
+            ),
         )
-        response.raise_for_status()
-        data = response.json()
-        return str(data.get("response", ""))
-
-    def _anthropic_generate(self, prompt: str) -> str:
-        payload = {
-            "model": self.model,
-            "max_tokens": 1024,
-            "temperature": 0.2,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        response = requests.post(
-            getattr(settings, "ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"),
-            json=payload,
-            headers={
-                "x-api-key": self.api_key,
-                "anthropic-version": getattr(
-                    settings, "ANTHROPIC_VERSION", "2023-06-01"
-                ),
-                "content-type": "application/json",
-            },
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = data.get("content") or []
-        if content and isinstance(content, list):
-            first_item = content[0] or {}
-            if isinstance(first_item, dict):
-                return str(first_item.get("text", ""))
-        return str(data.get("text", ""))
 
     def _format_conversation(self, messages: list[dict[str, str]]) -> str:
         lines: list[str] = []

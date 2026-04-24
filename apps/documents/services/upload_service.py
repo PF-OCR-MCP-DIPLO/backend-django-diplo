@@ -1,6 +1,6 @@
+import zipfile
 from hashlib import sha256
 from pathlib import Path
-import zipfile
 
 from django.core.files.base import ContentFile
 from django.db import transaction

@@ -7,8 +7,8 @@ from apps.extraction.schemas import ConsignacionBasica
 from apps.processing.models import (
     ExtractedDeposit,
     ExtractionLog,
-    ProcessRun,
     ProcessingSettings,
+    ProcessRun,
     SourceImage,
 )
 

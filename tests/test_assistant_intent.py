@@ -2,9 +2,20 @@ from django.test import SimpleTestCase
 
 from apps.api.services.assistant_multiagent import (
     AssistantIntent,
+    AssistantPlan,
     IntentAgent,
     PlanningAgent,
 )
+
+
+class FakeTextClient:
+    def __init__(self, *responses: str):
+        self.responses = list(responses)
+        self.calls = []
+
+    def generate(self, prompt: str, config):
+        self.calls.append({"prompt": prompt, "config": config})
+        return self.responses.pop(0) if self.responses else ""
 
 
 class AssistantIntentQueryTests(SimpleTestCase):
@@ -129,3 +140,138 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertEqual(
             intent.name, "unknown"
         )  # Since followup is no longer supported
+
+    def test_infer_without_user_message_returns_unknown(self):
+        intent = self.agent.infer(messages=[], job_id=None, errors=0)
+
+        self.assertEqual(intent.name, "unknown")
+        self.assertEqual(intent.confidence, 0.0)
+
+    def test_llm_infer_parses_json_and_injects_job_id(self):
+        text_client = FakeTextClient("""```json
+            {
+              "intent": "job_status",
+              "tool_hint": "get_job_status",
+              "confidence": 0.81,
+              "summary": "estado",
+              "arguments": {}
+            }
+            ```""")
+        agent = IntentAgent(
+            model="dummy",
+            timeout=3,
+            provider="anthropic",
+            api_key="test-key",
+            text_client=text_client,
+        )
+
+        intent = agent.infer(
+            messages=[{"role": "user", "content": "puedes ayudarme?"}],
+            job_id=99,
+            errors=4,
+        )
+
+        self.assertEqual(intent.name, "job_status")
+        self.assertEqual(intent.tool_hint, "get_job_status")
+        self.assertEqual(intent.arguments["job_id"], 99)
+        self.assertEqual(text_client.calls[0]["config"].provider, "anthropic")
+        self.assertEqual(text_client.calls[0]["config"].api_key, "test-key")
+
+    def test_llm_infer_invalid_payload_returns_unknown(self):
+        agent = IntentAgent(
+            model="dummy",
+            timeout=1,
+            provider="ollama",
+            text_client=FakeTextClient("not json"),
+        )
+
+        intent = agent.infer(
+            messages=[{"role": "user", "content": "ayuda general"}],
+            job_id=None,
+            errors=0,
+        )
+
+        self.assertEqual(intent.name, "unknown")
+        self.assertIsNone(intent.tool_hint)
+
+
+class AssistantPlanningTests(SimpleTestCase):
+    def test_plan_uses_tool_hint_without_llm_call(self):
+        planner = PlanningAgent(model="dummy", timeout=1, provider="ollama")
+        intent = AssistantIntent(
+            name="job_logs",
+            confidence=0.9,
+            tool_hint="get_job_logs",
+            summary="logs",
+        )
+
+        plan = planner.plan(
+            intent=intent,
+            messages=[{"role": "user", "content": "logs"}],
+            job_id=8,
+            errors=0,
+        )
+
+        self.assertEqual(plan.tool, "get_job_logs")
+        self.assertEqual(plan.arguments["job_id"], 8)
+
+    def test_plan_parses_llm_json_and_normalizes_query_arguments(self):
+        planner = PlanningAgent(
+            model="dummy",
+            timeout=1,
+            provider="ollama",
+            text_client=FakeTextClient(
+                '{"tool": "query_database", "arguments": {"query": null}}'
+            ),
+        )
+        intent = AssistantIntent(name="generic", confidence=0.1, summary="generic")
+
+        plan = planner.plan(
+            intent=intent,
+            messages=[{"role": "user", "content": "consulta"}],
+            job_id=4,
+            errors=0,
+        )
+
+        self.assertEqual(plan.tool, "query_database")
+        self.assertEqual(plan.arguments["job_id"], 4)
+        self.assertEqual(plan.arguments["query"], {})
+
+    def test_plan_rejects_invalid_llm_output(self):
+        planner = PlanningAgent(
+            model="dummy",
+            timeout=1,
+            provider="ollama",
+            text_client=FakeTextClient("not json"),
+        )
+        intent = AssistantIntent(name="generic", confidence=0.1, summary="generic")
+
+        plan = planner.plan(
+            intent=intent,
+            messages=[{"role": "user", "content": "consulta"}],
+            job_id=None,
+            errors=0,
+        )
+
+        self.assertEqual(plan.tool, "none")
+        self.assertEqual(plan.arguments, {})
+
+    def test_plan_rejects_unknown_tool(self):
+        planner = PlanningAgent(
+            model="dummy",
+            timeout=1,
+            provider="ollama",
+            text_client=FakeTextClient('{"tool": "drop_database", "arguments": []}'),
+        )
+        intent = AssistantIntent(name="generic", confidence=0.1, summary="generic")
+
+        plan = planner.plan(
+            intent=intent,
+            messages=[{"role": "user", "content": "consulta"}],
+            job_id=None,
+            errors=0,
+        )
+
+        self.assertIsInstance(plan, AssistantPlan)
+        self.assertEqual(plan.tool, "none")
+        self.assertEqual(plan.arguments, {})

@@ -4,24 +4,26 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.api.errors import api_error_response
 from apps.api.auth import ApiKeyPermission
+from apps.api.errors import api_error_response
 from apps.api.serializers import (
     AssistantChatSerializer,
-    ExtractionLogSerializer,
     BulkDepositCorrectionSerializer,
+    ExtractionLogSerializer,
+    ProcessingSettingsSerializer,
     ProcessRunDetailSerializer,
     ProcessRunListSerializer,
-    ProcessingSettingsSerializer,
     UploadDocumentSerializer,
 )
-from apps.api.services.assistant_agent import AssistantAgent
-from apps.documents.services.upload_service import create_process_run_from_upload
-from apps.documents.services.upload_service import UploadValidationError
+from apps.api.services.assistant_chat import AssistantChatService
+from apps.documents.services.upload_service import (
+    UploadValidationError,
+    create_process_run_from_upload,
+)
 from apps.processing.models import ProcessRun
+from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.job_runner import start_job_processing
 from apps.processing.services.manual_corrections import apply_deposit_corrections
-from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.orchestrator import process_job
 from apps.processing.services.settings_service import (
     available_options,
@@ -231,13 +233,4 @@ class AssistantChatView(APIView):
     def post(self, request):
         serializer = AssistantChatSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        payload = serializer.validated_data
-
-        agent = AssistantAgent()
-        result = agent.answer(
-            messages=payload["messages"],
-            job_id=payload.get("job_id"),
-            errors=payload.get("errors", 0),
-        )
-        result.setdefault("query_context", payload.get("query_context", {}))
-        return Response(result)
+        return Response(AssistantChatService().answer(serializer.validated_data))
