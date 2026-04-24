@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -96,6 +97,7 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+CORS_ALLOW_HEADERS = (*default_headers, "x-api-key")
 PROCESS_JOBS_ASYNC = os.environ.get("PROCESS_JOBS_ASYNC", "1") == "1"
 
 REST_FRAMEWORK = {

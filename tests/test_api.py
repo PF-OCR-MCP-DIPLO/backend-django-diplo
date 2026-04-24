@@ -631,3 +631,132 @@ class DocumentApiTests(TestCase):
             )
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["status"], "processing")
+
+
+class AssistantChatApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_chat_endpoint_accepts_frontend_contract(self):
+        with patch("apps.api.views.AssistantAgent") as mocked_agent_class:
+            mocked_agent = mocked_agent_class.return_value
+            mocked_agent.answer.return_value = {
+                "reply": "Consulta lista.",
+                "tool": "query_database",
+                "data": {"rows": []},
+            }
+
+            response = self.client.post(
+                "/api/assistant/chat/",
+                {
+                    "messages": [{"role": "user", "content": "Dame el resumen"}],
+                    "job_id": 12,
+                    "errors": 2,
+                    "query_context": {"scope": "results"},
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["reply"], "Consulta lista.")
+        self.assertEqual(payload["tool"], "query_database")
+        self.assertEqual(payload["data"], {"rows": []})
+        self.assertEqual(payload["query_context"], {"scope": "results"})
+        mocked_agent.answer.assert_called_once_with(
+            messages=[{"role": "user", "content": "Dame el resumen"}],
+            job_id=12,
+            errors=2,
+        )
+
+    def test_chat_endpoint_accepts_job_id_camel_alias(self):
+        with patch("apps.api.views.AssistantAgent") as mocked_agent_class:
+            mocked_agent = mocked_agent_class.return_value
+            mocked_agent.answer.return_value = {
+                "reply": "Estado consultado.",
+                "tool": "get_job_status",
+                "data": {"id": 7},
+            }
+
+            response = self.client.post(
+                "/api/assistant/chat/",
+                {
+                    "messages": [{"role": "user", "content": "Estado del job"}],
+                    "jobId": 7,
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["query_context"], {})
+        mocked_agent.answer.assert_called_once_with(
+            messages=[{"role": "user", "content": "Estado del job"}],
+            job_id=7,
+            errors=0,
+        )
+
+    def test_chat_endpoint_rejects_invalid_payload(self):
+        response = self.client.post(
+            "/api/assistant/chat/",
+            {"messages": [{"role": "client", "content": "Hola"}]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        self.assertIn("messages", payload["error"]["details"])
+
+    def test_chat_endpoint_rejects_conflicting_job_ids(self):
+        response = self.client.post(
+            "/api/assistant/chat/",
+            {
+                "messages": [{"role": "user", "content": "Hola"}],
+                "job_id": 1,
+                "jobId": 2,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        self.assertIn("job_id", payload["error"]["details"])
+
+    def test_chat_endpoint_returns_controlled_unavailable_response(self):
+        with patch("apps.api.views.AssistantAgent") as mocked_agent_class:
+            mocked_agent = mocked_agent_class.return_value
+            mocked_agent.answer.return_value = {
+                "reply": "El asistente no esta disponible temporalmente.",
+                "tool": "none",
+                "data": {"detail": "assistant_unavailable"},
+            }
+
+            response = self.client.post(
+                "/api/assistant/chat/",
+                {"messages": [{"role": "user", "content": "Hola"}]},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["tool"], "none")
+        self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
+        self.assertEqual(payload["query_context"], {})
+
+    def test_chat_endpoint_cors_allows_frontend_api_key_header(self):
+        response = self.client.options(
+            "/api/assistant/chat/",
+            HTTP_ORIGIN="http://localhost:5173",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type,x-api-key",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "http://localhost:5173",
+        )
+        allowed_headers = response.headers["access-control-allow-headers"]
+        self.assertIn("content-type", allowed_headers)
+        self.assertIn("x-api-key", allowed_headers)

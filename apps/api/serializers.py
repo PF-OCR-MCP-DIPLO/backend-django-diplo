@@ -218,7 +218,26 @@ class AssistantChatSerializer(serializers.Serializer):
         allow_empty=False,
     )
     job_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    jobId = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1, write_only=True
+    )
     errors = serializers.IntegerField(required=False, min_value=0, default=0)
+    query_context = serializers.DictField(required=False, default=dict)
+
+    def validate(self, attrs):
+        camel_job_id = attrs.pop("jobId", None)
+        snake_job_id = attrs.get("job_id")
+        if (
+            camel_job_id is not None
+            and snake_job_id is not None
+            and camel_job_id != snake_job_id
+        ):
+            raise serializers.ValidationError(
+                {"job_id": "job_id and jobId must reference the same job."}
+            )
+        if snake_job_id is None and camel_job_id is not None:
+            attrs["job_id"] = camel_job_id
+        return attrs
 
     def validate_messages(self, value):
         allowed_roles = {"user", "assistant", "system"}
@@ -231,7 +250,9 @@ class AssistantChatSerializer(serializers.Serializer):
                     f"Invalid message role '{role}'. Allowed: user, assistant, system."
                 )
             if not isinstance(content, str):
-                raise serializers.ValidationError("Each message content must be a string.")
+                raise serializers.ValidationError(
+                    "Each message content must be a string."
+                )
             cleaned.append({"role": role, "content": content})
         return cleaned
 

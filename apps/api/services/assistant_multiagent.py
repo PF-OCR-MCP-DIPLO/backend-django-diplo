@@ -270,6 +270,14 @@ class IntentAgent:
                 summary="Consulta SQL solicitada por el usuario",
             )
 
+        if self._matches_followup_query(text):
+            return AssistantIntent(
+                name="unknown",
+                confidence=0.75,
+                tool_hint="none",
+                summary="Solicitud de seguimiento ambigua sin consulta completa",
+            )
+
         return None
 
     def _matches_last_record_value(self, text: str) -> bool:
