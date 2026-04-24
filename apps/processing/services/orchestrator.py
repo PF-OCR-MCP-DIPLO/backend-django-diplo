@@ -103,7 +103,7 @@ def process_prepared_job(process_run, runtime_config):
                 )
                 if not fatal_error:
                     fatal_error = str(error)
-        
+
         for source_image in process_run.source_images.order_by("sequence_index", "id"):
             try:
                 total_records += supervisor.process_image(

@@ -12,7 +12,11 @@ django.setup()
 
 from apps.api.services.shared_tools import upload_document_from_path
 from apps.api.services.tool_dispatcher import execute_tool
-from mcp_server.schemas import JobIdInput, UpdateProcessingSettingsInput, UploadDocumentInput
+from mcp_server.schemas import (
+    JobIdInput,
+    UpdateProcessingSettingsInput,
+    UploadDocumentInput,
+)
 
 mcp = FastMCP("backend-django-diplo")
 
@@ -32,7 +36,9 @@ def _runtime_error_payload(error: Exception) -> str:
     )
 
 
-def _run_local_tool(tool: str, arguments: dict[str, Any] | None = None, job_id: int | None = None) -> str:
+def _run_local_tool(
+    tool: str, arguments: dict[str, Any] | None = None, job_id: int | None = None
+) -> str:
     try:
         payload = execute_tool(tool=tool, arguments=arguments, job_id=job_id)
         return _as_json({"ok": True, "data": payload})
@@ -70,7 +76,9 @@ def process_job(job_id: int) -> str:
 def get_job_status(job_id: int) -> str:
     """Fetch a detailed job status with images and deposits."""
     args = JobIdInput(job_id=job_id)
-    return _run_local_tool("get_job_status", {"job_id": args.job_id}, job_id=args.job_id)
+    return _run_local_tool(
+        "get_job_status", {"job_id": args.job_id}, job_id=args.job_id
+    )
 
 
 @mcp.tool()
@@ -96,7 +104,9 @@ def list_job_logs(job_id: int) -> str:
 def export_job_excel(job_id: int) -> str:
     """Generate Excel output for a completed job."""
     args = JobIdInput(job_id=job_id)
-    return _run_local_tool("export_job_excel", {"job_id": args.job_id}, job_id=args.job_id)
+    return _run_local_tool(
+        "export_job_excel", {"job_id": args.job_id}, job_id=args.job_id
+    )
 
 
 @mcp.tool()

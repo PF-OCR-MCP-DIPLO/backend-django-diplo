@@ -5,7 +5,10 @@ import zipfile
 from django.core.files.base import ContentFile
 from django.db import transaction
 
-from apps.documents.services.docx_image_extractor import extract_images_in_order, extract_text_from_docx
+from apps.documents.services.docx_image_extractor import (
+    extract_images_in_order,
+    extract_text_from_docx,
+)
 from apps.processing.models import ProcessRun, SourceImage
 from apps.processing.services.settings_service import (
     as_snapshot_dict,

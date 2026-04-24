@@ -17,7 +17,9 @@ class McpParityTests(TestCase):
             {"image1.png": PNG_ONE, "image2.png": PNG_TWO}
         )
 
-    def _multiagent_payload(self, tool: str, arguments: dict | None = None, job_id: int | None = None):
+    def _multiagent_payload(
+        self, tool: str, arguments: dict | None = None, job_id: int | None = None
+    ):
         plan = AssistantPlan(
             tool=tool,
             arguments=arguments or {},

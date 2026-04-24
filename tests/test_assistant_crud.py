@@ -90,7 +90,9 @@ class AssistantCrudToolTests(TestCase):
             {
                 "operation": "read",
                 "source": "deposits",
-                "filters": [{"field": "referencia", "op": "icontains", "value": "CRUD"}],
+                "filters": [
+                    {"field": "referencia", "op": "icontains", "value": "CRUD"}
+                ],
                 "limit": 10,
             }
         )

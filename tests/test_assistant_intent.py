@@ -1,6 +1,10 @@
 from django.test import SimpleTestCase
 
-from apps.api.services.assistant_multiagent import AssistantIntent, IntentAgent, PlanningAgent
+from apps.api.services.assistant_multiagent import (
+    AssistantIntent,
+    IntentAgent,
+    PlanningAgent,
+)
 
 
 class AssistantIntentQueryTests(SimpleTestCase):
@@ -24,7 +28,9 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertEqual(query["order_by"][0]["direction"], "desc")
 
     def test_range_and_references_query(self):
-        intent = self._infer("Dame las referencias entre el 1 de enero y el 15 de febrero")
+        intent = self._infer(
+            "Dame las referencias entre el 1 de enero y el 15 de febrero"
+        )
         self.assertEqual(intent.tool_hint, "query_database")
         query = intent.arguments["query"]
         self.assertIn("referencia", query["select"])
@@ -51,7 +57,9 @@ class AssistantIntentQueryTests(SimpleTestCase):
         intent = self._infer("Busca la transaccion con referencia ABC12345")
         self.assertEqual(intent.tool_hint, "query_database")
         query = intent.arguments["query"]
-        ref_filters = [item for item in query["filters"] if item["field"] == "referencia"]
+        ref_filters = [
+            item for item in query["filters"] if item["field"] == "referencia"
+        ]
         self.assertTrue(ref_filters)
         self.assertEqual(ref_filters[0]["op"], "icontains")
 
@@ -74,7 +82,9 @@ class AssistantIntentQueryTests(SimpleTestCase):
         }
 
         intent = self.agent.infer(
-            messages=[{"role": "user", "content": "ahora dame el promedio de transacciones"}],
+            messages=[
+                {"role": "user", "content": "ahora dame el promedio de transacciones"}
+            ],
             job_id=None,
             errors=0,
         )
@@ -86,14 +96,19 @@ class AssistantIntentQueryTests(SimpleTestCase):
         planner = PlanningAgent(model="dummy", timeout=1, provider="ollama")
         plan = planner.plan(
             intent=intent,
-            messages=[{"role": "user", "content": "ahora dame el promedio de transacciones"}],
+            messages=[
+                {"role": "user", "content": "ahora dame el promedio de transacciones"}
+            ],
             job_id=None,
             errors=0,
         )
         self.assertEqual(plan.tool, "query_database")
         merged_filters = plan.arguments["query"].get("filters", [])
         self.assertFalse(
-            any(item.get("field") == "valor" and item.get("op") == "gt" for item in merged_filters)
+            any(
+                item.get("field") == "valor" and item.get("op") == "gt"
+                for item in merged_filters
+            )
         )
 
     def test_true_followup_without_new_query_is_rejected(self):
@@ -111,4 +126,6 @@ class AssistantIntentQueryTests(SimpleTestCase):
         )
         self.assertIsNotNone(intent)
         assert isinstance(intent, AssistantIntent)
-        self.assertEqual(intent.name, "unknown")  # Since followup is no longer supported
+        self.assertEqual(
+            intent.name, "unknown"
+        )  # Since followup is no longer supported

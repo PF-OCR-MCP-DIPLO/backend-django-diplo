@@ -36,7 +36,6 @@ from apps.processing.services.settings_service import (
     get_runtime_config,
 )
 
-
 _ALLOWED_TOOLS = {
     "none",
     "health_check",
@@ -180,7 +179,9 @@ class IntentAgent:
                 arguments={
                     "query": {
                         "source": "deposits",
-                        "aggregations": [{"type": "count", "field": "id", "as": "total_records"}],
+                        "aggregations": [
+                            {"type": "count", "field": "id", "as": "total_records"}
+                        ],
                     }
                 },
                 summary="Pregunta por la cantidad total de registros",
@@ -584,7 +585,9 @@ class IntentAgent:
         )
         return _contains_any(text, transaction_terms) or (
             _contains_any(text, action_terms)
-            and _contains_any(text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo"))
+            and _contains_any(
+                text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
+            )
         )
 
     def _has_explicit_limit_request(self, text: str) -> bool:
@@ -997,10 +1000,14 @@ class IntentAgent:
         )
 
     def _matches_job_logs(self, text: str) -> bool:
-        return _contains_any(text, ("logs", "bitacora", "historial de logs", "ver logs"))
+        return _contains_any(
+            text, ("logs", "bitacora", "historial de logs", "ver logs")
+        )
 
     def _matches_settings(self, text: str) -> bool:
-        return _contains_any(text, ("configuracion", "configuración", "settings", "ajustes"))
+        return _contains_any(
+            text, ("configuracion", "configuración", "settings", "ajustes")
+        )
 
     def _matches_database_schema(self, text: str) -> bool:
         return _contains_any(
@@ -2376,14 +2383,14 @@ class ResponseAgent:
             source = tool_payload.get("source", "datos")
             meta = tool_payload.get("meta") or {}
             rows = tool_payload.get("rows", [])
-            
+
             # Special handling for count aggregations
             if meta.get("has_aggregations") and len(rows) == 1:
                 row = rows[0]
                 if "total_records" in row:
                     count = row["total_records"]
                     return f"Actualmente hay {count} registros en total."
-            
+
             rows_count = meta.get("rows_count", 0)
             return f"Ejecuté una consulta sobre {source} y obtuve {rows_count} resultado(s)."
 
