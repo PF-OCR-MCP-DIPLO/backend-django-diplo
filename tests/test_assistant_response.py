@@ -196,6 +196,32 @@ class AssistantResponseAgentTests(SimpleTestCase):
 
         self.assertEqual(response, "Hola, claro que sí.")
 
+    def test_compose_none_falls_back_to_helpful_copy_when_model_is_empty(self):
+        empty_agent = ResponseAgent(
+            model="dummy",
+            timeout=1,
+            provider="ollama",
+            text_client=FakeTextClient(""),
+        )
+        plan = AssistantPlan(
+            tool="none",
+            arguments={},
+            intent_name="generic_chat",
+            intent_summary="generic chat",
+        )
+
+        fallback = empty_agent.compose(
+            messages=[{"role": "user", "content": "hola"}],
+            intent=self.intent,
+            plan=plan,
+            tool_payload={},
+            job_id=None,
+            errors=0,
+        )
+
+        self.assertNotIn("herramienta no devolvió datos", fallback.lower())
+        self.assertIn("puedo ayudarte", fallback.lower())
+
     def test_compose_capabilities_tool(self):
         response = self._compose(
             "explain_capabilities",
