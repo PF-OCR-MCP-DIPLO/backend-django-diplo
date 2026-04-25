@@ -711,6 +711,71 @@ class DocumentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    @override_settings(API_KEY="dev")
+    def test_reprocess_deposit_endpoint_reprocesses_single_image(self):
+        upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        upload_response = self.client.post(
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
+        )
+        job_id = upload_response.json()["id"]
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                side_effect=[
+                    [
+                        {
+                            "fecha_consignacion": "01/04/2026",
+                            "hora_consignacion": "10:00",
+                            "referencia": "REF001",
+                            "valor": 150000.0,
+                            "archivo_origen": "image1.png",
+                        }
+                    ],
+                    [],
+                ],
+            ),
+        ):
+            process_response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+        deposit_id = process_response.json()["source_images"][0]["deposits"][0]["id"]
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                return_value="OCR 1 REPROCESS",
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[
+                    {
+                        "fecha_consignacion": "02/04/2026",
+                        "hora_consignacion": "11:00",
+                        "referencia": "REF777",
+                        "valor": 170000.0,
+                        "archivo_origen": "image1.png",
+                    }
+                ],
+            ),
+        ):
+            response = self.client.post(
+                f"/api/jobs/{job_id}/deposits/{deposit_id}/reprocess/",
+                HTTP_X_API_KEY="dev",
+            )
+        self.assertEqual(response.status_code, 200)
+        refreshed = response.json()["source_images"][0]["deposits"][0]
+        self.assertEqual(refreshed["referencia"], "REF777")
+
     @override_settings(PROCESS_JOBS_ASYNC=True, API_KEY="dev")
     def test_process_endpoint_returns_accepted_when_async_enabled(self):
         upload = SimpleUploadedFile(
