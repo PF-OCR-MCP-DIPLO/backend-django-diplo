@@ -168,4 +168,41 @@ class AssistantResponseAgentTests(SimpleTestCase):
             job_id=None,
             errors=0,
         )
-        self.assertIn("No pude generar", fallback)
+        self.assertIn("puedo ayudarte", fallback.lower())
+
+    def test_compose_none_uses_conversational_chat(self):
+        text_client = FakeTextClient("Hola, claro que sí.")
+        agent = ResponseAgent(
+            model="dummy",
+            timeout=6,
+            provider="ollama",
+            text_client=text_client,
+        )
+        plan = AssistantPlan(
+            tool="none",
+            arguments={},
+            intent_name="generic_chat",
+            intent_summary="generic chat",
+        )
+
+        response = agent.compose(
+            messages=[{"role": "user", "content": "hola"}],
+            intent=self.intent,
+            plan=plan,
+            tool_payload={"kind": "none"},
+            job_id=None,
+            errors=0,
+        )
+
+        self.assertEqual(response, "Hola, claro que sí.")
+
+    def test_compose_capabilities_tool(self):
+        response = self._compose(
+            "explain_capabilities",
+            {
+                "title": "Puedo ayudarte con esto",
+                "capabilities": ["Consultar jobs", "Exportar Excel"],
+                "tools": ["list_jobs"],
+            },
+        )
+        self.assertIn("Consultar jobs", response)

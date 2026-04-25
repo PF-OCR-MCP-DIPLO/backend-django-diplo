@@ -54,7 +54,18 @@ _ALLOWED_TOOLS = {
     "process_job",
     "export_job_excel",
     "upload_document",
+    "list_available_tools",
+    "explain_capabilities",
+    "help",
 }
+
+_CAPABILITIES = [
+    "Consultar jobs, estados, logs y errores de procesamiento.",
+    "Buscar datos de consignaciones con lenguaje natural.",
+    "Corregir registros por id o filtros.",
+    "Actualizar configuración de OCR, LLM y chatbot.",
+    "Procesar jobs y exportar Excel.",
+]
 
 
 logger = logging.getLogger(__name__)
@@ -140,12 +151,27 @@ class IntentAgent:
                 name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
             )
 
+        if self._looks_like_greeting(last_user_message):
+            return AssistantIntent(
+                name="generic_chat",
+                confidence=0.99,
+                tool_hint="none",
+                summary="Saludo o charla general",
+            )
+
         direct_intent = self._infer_direct_intent(
             last_user_message,
             job_id,
         )
         if direct_intent is not None:
             return direct_intent
+        if self._matches_capabilities_request(last_user_message):
+            return AssistantIntent(
+                name="capabilities",
+                confidence=0.99,
+                tool_hint="explain_capabilities",
+                summary="Pregunta de capacidades o ayuda",
+            )
 
         return self._infer_with_llm(messages, job_id=job_id, errors=errors)
 
@@ -1015,6 +1041,33 @@ class IntentAgent:
             text, ("configuracion", "configuración", "settings", "ajustes")
         )
 
+    def _matches_capabilities_request(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "que puedes hacer",
+                "qué puedes hacer",
+                "que herramientas",
+                "qué herramientas",
+                "herramientas tienes",
+                "comandos",
+                "mcp",
+            ),
+        )
+
+    def _looks_like_greeting(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "hola",
+                "buenas",
+                "buenos dias",
+                "buenos días",
+                "hey",
+                "saludos",
+            ),
+        )
+
     def _matches_database_schema(self, text: str) -> bool:
         return _contains_any(
             text,
@@ -1224,6 +1277,13 @@ class PlanningAgent:
             )
 
         conversation = self._last_user_message(messages)
+        if intent.name in {"capabilities", "help", "generic_chat"}:
+            return AssistantPlan(
+                tool="none",
+                arguments={},
+                intent_name=intent.name,
+                intent_summary=intent.summary,
+            )
         sql_mode_rules = (
             "- query_database_sql permite SQL libre para pruebas."
             if _allow_unsafe_sql_enabled()
@@ -1658,6 +1718,16 @@ class ToolExecutionAgent:
                 return upload_document_from_path(file_path)
             except ValueError as exc:
                 return {"detail": str(exc)}
+
+        if plan.tool == "list_available_tools":
+            return sorted(tool for tool in _ALLOWED_TOOLS if tool != "none")
+
+        if plan.tool in {"explain_capabilities", "help"}:
+            return {
+                "title": "Puedo ayudarte con esto",
+                "capabilities": _CAPABILITIES,
+                "tools": sorted(tool for tool in _ALLOWED_TOOLS if tool != "none"),
+            }
 
         return {"detail": f"Unsupported tool: {plan.tool}"}
 
@@ -2264,12 +2334,16 @@ class ResponseAgent:
         timeout: int,
         provider: str,
         api_key: str = "",
+        temperature: float = 0.2,
+        num_predict: int = 256,
         text_client: AssistantTextClient | None = None,
     ) -> None:
         self.model = model
         self.timeout = timeout
         self.provider = provider
         self.api_key = api_key
+        self.temperature = temperature
+        self.num_predict = num_predict
         self.text_client = text_client or AssistantTextClient()
 
     def _last_user_message(self, messages: list[dict[str, str]]) -> str:
@@ -2305,6 +2379,27 @@ class ResponseAgent:
                 return f"Eliminé {tool_payload.get('deleted_count', 0)} registro(s)."
             if operation == "read":
                 return "Consulta CRUD de lectura ejecutada correctamente."
+
+        if plan.tool == "explain_capabilities" and isinstance(tool_payload, dict):
+            capabilities = tool_payload.get("capabilities") or []
+            if isinstance(capabilities, list) and capabilities:
+                return "Puedo ayudarte con: " + "; ".join(str(item) for item in capabilities)
+            return "Puedo ayudarte con jobs, logs, correcciones, settings y exportación."
+
+        if plan.tool == "help" and isinstance(tool_payload, dict):
+            return self.compose(
+                messages=messages,
+                intent=intent,
+                plan=AssistantPlan(
+                    tool="explain_capabilities",
+                    arguments={},
+                    intent_name=plan.intent_name,
+                    intent_summary=plan.intent_summary,
+                ),
+                tool_payload=tool_payload,
+                job_id=job_id,
+                errors=errors,
+            )
 
         if plan.tool == "list_jobs" and isinstance(tool_payload, list):
             return f"Encontré {len(tool_payload)} jobs recientes. Te los muestro en tarjetas en la interfaz."
@@ -2367,6 +2462,14 @@ class ResponseAgent:
             job_ref = tool_payload.get("job_id")
             return f"El ultimo registro del job #{job_ref} tiene valor {valor} y referencia {referencia}."
 
+        if plan.tool == "none":
+            return self._general_chat_response(
+                messages=messages,
+                job_id=job_id,
+                errors=errors,
+                query_context={},
+            )
+
         conversation = self._last_user_message(messages)
         prompt = f"""
 Eres el asistente del dashboard de procesamiento.
@@ -2404,8 +2507,8 @@ Instrucciones:
                 model=self.model,
                 timeout=self.timeout,
                 api_key=self.api_key,
-                temperature=0.2,
-                num_predict=256,
+                temperature=self.temperature,
+                num_predict=self.num_predict,
             ),
         )
 
@@ -2424,6 +2527,37 @@ Instrucciones:
         except TypeError:
             return json.dumps(str(payload), ensure_ascii=False, indent=2)
 
+    def _general_chat_response(
+        self,
+        messages: list[dict[str, str]],
+        job_id: int | None,
+        errors: int,
+        query_context: dict[str, Any],
+    ) -> str:
+        conversation = self._format_conversation(messages)
+        prompt = f"""
+Eres un asistente conversacional útil para un dashboard de procesamiento.
+Responde de forma natural, breve y clara en espanol.
+
+Contexto:
+- job_id_actual: {job_id if job_id is not None else 'null'}
+- errores_detectados: {errors}
+- query_context: {self._safe_json_dump(query_context)}
+
+Capacidades:
+{chr(10).join(f"- {item}" for item in _CAPABILITIES)}
+
+Conversacion:
+{conversation}
+
+Instrucciones:
+- Si el usuario saluda, saluda de vuelta y ofrece ayuda.
+- Si pregunta por herramientas o MCP, explica capacidades sin listar JSON.
+- Si pide ayuda general, responde como conversación.
+""".strip()
+        response = self._generate_text(prompt)
+        return response.strip() or "Hola, puedo ayudarte con jobs, logs, correcciones, settings y exportación."
+
 
 class AssistantAgent:
     def __init__(self) -> None:
@@ -2431,6 +2565,8 @@ class AssistantAgent:
         self.timeout = settings.OLLAMA_TIMEOUT
         self.provider = "ollama"
         self.api_key = ""
+        self.temperature = 0.2
+        self.num_predict = 256
         self.intent_agent = IntentAgent(
             self.model, self.timeout, self.provider, self.api_key
         )
@@ -2439,20 +2575,27 @@ class AssistantAgent:
         )
         self.tool_agent = ToolExecutionAgent()
         self.response_agent = ResponseAgent(
-            self.model, self.timeout, self.provider, self.api_key
+            self.model,
+            self.timeout,
+            self.provider,
+            self.api_key,
+            temperature=self.temperature,
+            num_predict=self.num_predict,
         )
 
     def _sync_runtime_model(self) -> None:
         runtime = get_runtime_config()
-        model = runtime.llm_model or settings.OLLAMA_MODEL
+        model = runtime.assistant_model or runtime.llm_model or settings.OLLAMA_MODEL
         timeout = runtime.request_timeout_seconds or settings.OLLAMA_TIMEOUT
-        provider = runtime.llm_provider or "ollama"
-        api_key = runtime.llm_api_key or ""
+        provider = runtime.assistant_provider or runtime.llm_provider or "ollama"
+        api_key = runtime.assistant_api_key or runtime.llm_api_key or ""
 
         self.model = model
         self.timeout = timeout
         self.provider = provider
         self.api_key = api_key
+        self.temperature = runtime.assistant_temperature or 0.2
+        self.num_predict = runtime.assistant_num_predict or 256
 
         self.intent_agent.model = model
         self.intent_agent.timeout = timeout
@@ -2466,6 +2609,9 @@ class AssistantAgent:
         self.response_agent.timeout = timeout
         self.response_agent.provider = provider
         self.response_agent.api_key = api_key
+        self.response_agent.model = model
+        self.response_agent.temperature = self.temperature
+        self.response_agent.num_predict = self.num_predict
 
     def answer(
         self,

@@ -17,6 +17,11 @@ class UpdateProcessingSettingsInput(BaseModel):
     ocr_model: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    assistant_provider: str | None = None
+    assistant_model: str | None = None
+    assistant_api_key: str | None = None
+    assistant_temperature: float | None = None
+    assistant_num_predict: int | None = None
     ocr_api_key: str | None = None
     llm_api_key: str | None = None
     request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)

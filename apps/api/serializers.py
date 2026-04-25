@@ -125,10 +125,14 @@ class ExtractionLogSerializer(serializers.ModelSerializer):
 class ProcessingSettingsSerializer(serializers.ModelSerializer):
     has_ocr_api_key = serializers.SerializerMethodField(read_only=True)
     has_llm_api_key = serializers.SerializerMethodField(read_only=True)
+    has_assistant_api_key = serializers.SerializerMethodField(read_only=True)
     ocr_api_key = serializers.CharField(
         required=False, allow_blank=True, write_only=True, max_length=255
     )
     llm_api_key = serializers.CharField(
+        required=False, allow_blank=True, write_only=True, max_length=255
+    )
+    assistant_api_key = serializers.CharField(
         required=False, allow_blank=True, write_only=True, max_length=255
     )
 
@@ -140,10 +144,16 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "ocr_model",
             "llm_provider",
             "llm_model",
+            "assistant_provider",
+            "assistant_model",
             "ocr_api_key",
             "llm_api_key",
+            "assistant_api_key",
             "has_ocr_api_key",
             "has_llm_api_key",
+            "has_assistant_api_key",
+            "assistant_temperature",
+            "assistant_num_predict",
             "request_timeout_seconds",
             "updated_at",
         ]
@@ -154,6 +164,9 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
     def get_has_llm_api_key(self, obj):
         return bool(obj.llm_api_key)
 
+    def get_has_assistant_api_key(self, obj):
+        return bool(obj.assistant_api_key)
+
     def validate(self, attrs):
         instance = self.instance
         ocr_mode = attrs.get("ocr_mode", getattr(instance, "ocr_mode", "vision"))
@@ -163,10 +176,19 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         llm_provider = attrs.get(
             "llm_provider", getattr(instance, "llm_provider", "ollama")
         )
+        assistant_provider = attrs.get(
+            "assistant_provider", getattr(instance, "assistant_provider", "ollama")
+        )
         ocr_api_key = attrs.get("ocr_api_key", getattr(instance, "ocr_api_key", ""))
         llm_api_key = attrs.get("llm_api_key", getattr(instance, "llm_api_key", ""))
+        assistant_api_key = attrs.get(
+            "assistant_api_key", getattr(instance, "assistant_api_key", "")
+        )
         ocr_model = attrs.get("ocr_model", getattr(instance, "ocr_model", ""))
         llm_model = attrs.get("llm_model", getattr(instance, "llm_model", ""))
+        assistant_model = attrs.get(
+            "assistant_model", getattr(instance, "assistant_model", "")
+        )
         request_timeout_seconds = attrs.get(
             "request_timeout_seconds",
             getattr(instance, "request_timeout_seconds", 320),
@@ -199,6 +221,19 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             ]
         if not llm_model:
             errors["llm_model"] = ["LLM model is required."]
+
+        if assistant_provider == "ollama" and not assistant_model:
+            errors["assistant_model"] = [
+                "Assistant model is required when assistant_provider is ollama."
+            ]
+        if assistant_provider != "ollama":
+            if not assistant_api_key:
+                errors["assistant_api_key"] = [
+                    f"Assistant provider '{assistant_provider}' requires API key."
+                ]
+            errors["assistant_provider"] = [
+                f"Assistant provider '{assistant_provider}' is not operational in this MVP."
+            ]
 
         if ocr_mode == "tesseract":
             effective_ocr_model = attrs.get(

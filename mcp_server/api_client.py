@@ -25,7 +25,7 @@ class BackendApiClient:
     def _headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
         if self.api_token:
-            headers["Authorization"] = f"Bearer {self.api_token}"
+            headers["X-API-Key"] = self.api_token
         return headers
 
     def _handle_response(self, response: requests.Response) -> Any:

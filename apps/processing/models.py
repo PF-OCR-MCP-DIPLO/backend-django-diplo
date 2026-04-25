@@ -100,8 +100,15 @@ class ProcessingSettings(models.Model):
         max_length=32, choices=Provider.choices, default=Provider.OLLAMA
     )
     llm_model = models.CharField(max_length=128, blank=True)
+    assistant_provider = models.CharField(
+        max_length=32, choices=Provider.choices, default=Provider.OLLAMA
+    )
+    assistant_model = models.CharField(max_length=128, blank=True)
     ocr_api_key = models.CharField(max_length=255, blank=True)
     llm_api_key = models.CharField(max_length=255, blank=True)
+    assistant_api_key = models.CharField(max_length=255, blank=True)
+    assistant_temperature = models.FloatField(default=0.2)
+    assistant_num_predict = models.PositiveIntegerField(default=256)
     request_timeout_seconds = models.PositiveIntegerField(default=320)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
