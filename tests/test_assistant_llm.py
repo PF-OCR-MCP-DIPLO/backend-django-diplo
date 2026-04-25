@@ -1,15 +1,24 @@
 from django.test import SimpleTestCase, override_settings
 
-from apps.api.services.assistant_llm import AssistantTextClient, TextGenerationConfig
+import requests
+
+from apps.api.services.assistant_llm import (
+    AssistantProviderError,
+    AssistantTextClient,
+    TextGenerationConfig,
+)
 
 
 class FakeResponse:
     def __init__(self, payload: dict):
         self.payload = payload
         self.raise_for_status_called = False
+        self.status_code = 500
+        self.text = "boom"
 
     def raise_for_status(self):
         self.raise_for_status_called = True
+        return None
 
     def json(self):
         return self.payload
@@ -93,3 +102,27 @@ class AssistantTextClientTests(SimpleTestCase):
         )
 
         self.assertEqual(result, "texto plano")
+
+    @override_settings(OLLAMA_URL="http://ollama.local/api/generate")
+    def test_ollama_generate_raises_provider_error_with_detail(self):
+        session = FakeSession({"error": "model not found"})
+
+        def _raise_for_status():
+            raise requests.HTTPError(response=session.response)
+
+        session.response.raise_for_status = _raise_for_status
+        client = AssistantTextClient(session=session)
+
+        with self.assertRaises(AssistantProviderError) as ctx:
+            client.generate(
+                "hola",
+                TextGenerationConfig(
+                    provider="ollama",
+                    model="gemma4:e2b",
+                    timeout=9,
+                ),
+            )
+
+        self.assertEqual(ctx.exception.provider, "ollama")
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertIn("model not found", ctx.exception.detail)

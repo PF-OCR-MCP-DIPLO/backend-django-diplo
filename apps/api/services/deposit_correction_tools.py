@@ -145,6 +145,13 @@ def deposit_correction_success_description(payload: dict[str, Any]) -> str:
     return f"Corrigí la fila #{deposit_id} del job #{job_id}{suffix}."
 
 
+def deposit_correction_failure_description(payload: dict[str, Any]) -> str:
+    detail = payload.get("detail")
+    if detail:
+        return str(detail)
+    return "No fue posible corregir la fila solicitada."
+
+
 def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         return {"detail": "update_deposit_correction requiere arguments como objeto."}

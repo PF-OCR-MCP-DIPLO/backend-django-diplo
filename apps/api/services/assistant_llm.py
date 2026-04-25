@@ -11,6 +11,20 @@ class HttpSession(Protocol):
     def post(self, url: str, **kwargs: Any): ...
 
 
+class AssistantProviderError(RuntimeError):
+    def __init__(
+        self,
+        provider: str,
+        message: str,
+        status_code: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        self.provider = provider
+        self.status_code = status_code
+        self.detail = detail or message
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class TextGenerationConfig:
     provider: str
@@ -42,12 +56,37 @@ class AssistantTextClient:
                 "num_predict": config.num_predict,
             },
         }
-        response = self.session.post(
-            settings.OLLAMA_URL,
-            json=payload,
-            timeout=config.timeout,
-        )
-        response.raise_for_status()
+        try:
+            response = self.session.post(
+                settings.OLLAMA_URL,
+                json=payload,
+                timeout=config.timeout,
+            )
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            response = getattr(exc, "response", None)
+            detail = None
+            if response is not None:
+                try:
+                    payload_data = response.json()
+                    if isinstance(payload_data, dict):
+                        detail = str(
+                            payload_data.get("error")
+                            or payload_data.get("message")
+                            or payload_data.get("detail")
+                            or payload_data
+                        )
+                except Exception:
+                    detail = getattr(response, "text", "") or None
+            raise AssistantProviderError(
+                provider="ollama",
+                status_code=getattr(response, "status_code", None),
+                detail=detail,
+                message=(
+                    f"Ollama devolvio {getattr(response, 'status_code', 'un error')} "
+                    f"al generar texto."
+                ),
+            ) from exc
         data = response.json()
         return str(data.get("response", ""))
 

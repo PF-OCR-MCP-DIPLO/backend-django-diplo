@@ -29,6 +29,7 @@ from apps.api.services.pending_actions import (
 from apps.api.services.deposit_correction_tools import (
     deposit_correction_confirmation_message,
     deposit_correction_has_updates,
+    deposit_correction_failure_description,
     deposit_correction_needs_clarification,
     deposit_correction_payload_for_correction,
     deposit_correction_success_description,
@@ -44,7 +45,11 @@ from apps.api.serializers import (
     ProcessRunDetailSerializer,
     ProcessRunListSerializer,
 )
-from apps.api.services.assistant_llm import AssistantTextClient, TextGenerationConfig
+from apps.api.services.assistant_llm import (
+    AssistantProviderError,
+    AssistantTextClient,
+    TextGenerationConfig,
+)
 from apps.api.services.tool_risk import get_tool_risk_level, tool_requires_confirmation
 from apps.processing.models import (
     ExtractedDeposit,
@@ -2632,10 +2637,10 @@ class ResponseAgent:
             return f"El ultimo registro del job #{job_ref} tiene valor {valor} y referencia {referencia}."
 
         if plan.tool == "update_deposit_correction" and isinstance(tool_payload, dict):
-            detail = tool_payload.get("detail")
-            if detail:
-                return str(detail)
-            return f"Corrigí la fila #{tool_payload.get('deposit_id')} del job #{tool_payload.get('job_id')}."
+            detail = deposit_correction_failure_description(tool_payload)
+            if detail and tool_payload.get("operation") != "update":
+                return detail
+            return deposit_correction_success_description(tool_payload)
 
         if plan.tool == "none":
             return self._general_chat_response(
@@ -2961,6 +2966,31 @@ class AssistantAgent:
                 "data": tool_payload,
                 "task": task.name,
                 "task_context": task_context,
+                "query_context": clear_pending_action(normalized_query_context),
+            }
+        except AssistantProviderError as exc:
+            logger.warning(
+                "Assistant provider error during answer pipeline: provider=%s status=%s detail=%s",
+                exc.provider,
+                exc.status_code,
+                exc.detail,
+            )
+            return {
+                "reply": (
+                    "El asistente no esta disponible temporalmente. "
+                    "Hubo un problema con el proveedor de texto."
+                ),
+                "message": (
+                    "El asistente no esta disponible temporalmente. "
+                    "Hubo un problema con el proveedor de texto."
+                ),
+                "tool": "none",
+                "data": {
+                    "detail": "assistant_provider_error",
+                    "provider": exc.provider,
+                    "status_code": exc.status_code,
+                    "error": exc.detail,
+                },
                 "query_context": clear_pending_action(normalized_query_context),
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
