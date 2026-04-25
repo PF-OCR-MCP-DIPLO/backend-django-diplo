@@ -151,19 +151,26 @@ def deposit_correction_failure_description(payload: dict[str, Any]) -> str:
         return str(detail)
     return "No fue posible corregir la fila solicitada."
 
-
 def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         return {"detail": "update_deposit_correction requiere arguments como objeto."}
 
-    serializer = DepositCorrectionSerializer(data=arguments)
-    serializer.is_valid(raise_exception=True)
-    job_id = serializer.validated_data["job_id"]
-    deposit_id = serializer.validated_data["id"]
+    raw_job_id = arguments.get("job_id")
+    raw_deposit_id = arguments.get("deposit_id") or arguments.get("id")
+
+    if not str(raw_job_id or "").strip().isdigit():
+        return {"detail": "job_id es requerido."}
+
+    if not str(raw_deposit_id or "").strip().isdigit():
+        return {"detail": "invalid deposit_id: deposit_id es requerido."}
+
+    job_id = int(raw_job_id)
+    deposit_id = int(raw_deposit_id)
 
     job = ProcessRun.objects.filter(pk=job_id).first()
     if job is None:
         return {"detail": "job_id invalido."}
+
     if job.status == ProcessRun.Status.PROCESSING:
         return {"detail": "El job no se puede editar mientras esta procesando."}
 
@@ -172,17 +179,43 @@ def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
     except ExtractedDeposit.DoesNotExist:
         return {"detail": "deposit_id no pertenece al job indicado."}
 
+    values = deposit_correction_values_from_arguments(arguments)
+    if not values:
+        return {"detail": "Para corregir la fila necesito al menos un campo a actualizar."}
+
+    unknown_fields = set(values) - _ALLOWED_UPDATE_FIELDS
+    if unknown_fields:
+        return {
+            "detail": "Campos no permitidos para corrección.",
+            "fields": sorted(unknown_fields),
+        }
+
     item = {
         "id": deposit.id,
-        "fecha_consignacion": serializer.validated_data["fecha_consignacion"]
-        or deposit.fecha_consignacion,
-        "hora_consignacion": serializer.validated_data["hora_consignacion"]
-        or deposit.hora_consignacion,
+        "fecha_consignacion": _to_ddmmyyyy(
+            values.get("fecha_consignacion", deposit.fecha_consignacion)
+        ),
+        "hora_consignacion": values.get(
+            "hora_consignacion", deposit.hora_consignacion
+        ),
+        "referencia": values.get("referencia", deposit.referencia),
+        "valor": values.get("valor", deposit.valor),
+    }
+
+    serializer = DepositCorrectionSerializer(data={**item, "job_id": job.id})
+    serializer.is_valid(raise_exception=True)
+
+    corrected_item = {
+        "id": serializer.validated_data["id"],
+        "fecha_consignacion": serializer.validated_data["fecha_consignacion"],
+        "hora_consignacion": serializer.validated_data["hora_consignacion"],
         "referencia": serializer.validated_data["referencia"],
         "valor": serializer.validated_data["valor"],
     }
-    updated_job = apply_deposit_correction(job, item)
+
+    updated_job = apply_deposit_correction(job, corrected_item)
     updated_deposit = updated_job.deposits.get(pk=deposit.id)
+
     return {
         "job_id": updated_job.id,
         "deposit_id": updated_deposit.id,
@@ -194,3 +227,20 @@ def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
             "valor": str(updated_deposit.valor),
         },
     }
+
+def _to_ddmmyyyy(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    # Already DD/MM/YYYY
+    if "/" in text:
+        return text
+
+    # Convert YYYY-MM-DD to DD/MM/YYYY
+    parts = text.split("-")
+    if len(parts) == 3 and len(parts[0]) == 4:
+        year, month, day = parts
+        return f"{day}/{month}/{year}"
+
+    return text

@@ -1652,7 +1652,7 @@ class ToolExecutionAgent:
             return self._execute_crud_database(plan.arguments)
 
         if plan.tool == "update_deposit_correction":
-            return self._execute_update_deposit_correction(plan.arguments)
+            return execute_deposit_correction(plan.arguments)
 
         if plan.tool == "list_jobs":
             jobs = ProcessRun.objects.order_by("-created_at")[:5]
