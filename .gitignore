@@ -176,3 +176,5 @@ cython_debug/
 
 *.docx
 *.xlsx
+
+codigo_select.txt
