@@ -256,7 +256,9 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             attrs["ocr_provider"] = "ollama"
         if errors:
             raise serializers.ValidationError(errors)
-        attrs["extraction_criteria"] = normalize_extraction_criteria(extraction_criteria)
+        attrs["extraction_criteria"] = normalize_extraction_criteria(
+            extraction_criteria
+        )
         attrs["assistant_show_debug_details"] = bool(assistant_show_debug_details)
         return attrs
 

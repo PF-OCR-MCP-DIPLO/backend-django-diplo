@@ -2383,8 +2383,12 @@ class ResponseAgent:
         if plan.tool == "explain_capabilities" and isinstance(tool_payload, dict):
             capabilities = tool_payload.get("capabilities") or []
             if isinstance(capabilities, list) and capabilities:
-                return "Puedo ayudarte con: " + "; ".join(str(item) for item in capabilities)
-            return "Puedo ayudarte con jobs, logs, correcciones, settings y exportación."
+                return "Puedo ayudarte con: " + "; ".join(
+                    str(item) for item in capabilities
+                )
+            return (
+                "Puedo ayudarte con jobs, logs, correcciones, settings y exportación."
+            )
 
         if plan.tool == "help" and isinstance(tool_payload, dict):
             return self.compose(
@@ -2556,7 +2560,10 @@ Instrucciones:
 - Si pide ayuda general, responde como conversación.
 """.strip()
         response = self._generate_text(prompt)
-        return response.strip() or "Hola, puedo ayudarte con jobs, logs, correcciones, settings y exportación."
+        return (
+            response.strip()
+            or "Hola, puedo ayudarte con jobs, logs, correcciones, settings y exportación."
+        )
 
 
 class AssistantAgent:

@@ -1,6 +1,5 @@
 from copy import deepcopy
 
-
 DEFAULT_EXTRACTION_CRITERIA = {
     "fields": [
         {
@@ -11,7 +10,10 @@ DEFAULT_EXTRACTION_CRITERIA = {
             "enabled": True,
             "expectedValue": None,
             "validationRules": [
-                {"kind": "required", "message": "La fecha de consignacion es obligatoria."},
+                {
+                    "kind": "required",
+                    "message": "La fecha de consignacion es obligatoria.",
+                },
             ],
             "helpText": "Fecha de la consignacion en formato DD/MM/YYYY.",
             "order": 1,
@@ -81,9 +83,11 @@ def normalize_extraction_criteria(value):
                 "required": bool(field.get("required", False)),
                 "enabled": bool(field.get("enabled", True)),
                 "expectedValue": field.get("expectedValue"),
-                "validationRules": field.get("validationRules")
-                if isinstance(field.get("validationRules"), list)
-                else [],
+                "validationRules": (
+                    field.get("validationRules")
+                    if isinstance(field.get("validationRules"), list)
+                    else []
+                ),
                 "helpText": field.get("helpText") or "",
                 "order": int(field.get("order") or index + 1),
             }

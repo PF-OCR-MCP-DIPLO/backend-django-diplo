@@ -58,7 +58,10 @@ def _extract_models(payload: object) -> list[OllamaModelInfo]:
                 name=name,
                 label=str(item.get("name_display") or name).strip() or name,
                 size=item.get("size") if isinstance(item.get("size"), int) else None,
-                modified_at=str(item.get("modified_at") or item.get("modifiedAt") or "").strip() or None,
+                modified_at=str(
+                    item.get("modified_at") or item.get("modifiedAt") or ""
+                ).strip()
+                or None,
             )
         )
     return models

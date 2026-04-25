@@ -7,7 +7,10 @@ from apps.processing.services.extraction_criteria import (
     default_extraction_criteria,
     normalize_extraction_criteria,
 )
-from apps.processing.services.ollama_models import get_available_models, list_installed_models
+from apps.processing.services.ollama_models import (
+    get_available_models,
+    list_installed_models,
+)
 
 
 @dataclass(frozen=True)

@@ -28,7 +28,9 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertTrue(updated.assistant_show_debug_details)
         self.assertEqual(updated.assistant_temperature, 0.4)
         self.assertEqual(updated.assistant_num_predict, 512)
-        self.assertEqual(updated.extraction_criteria["fields"][0]["key"], "fecha_consignacion")
+        self.assertEqual(
+            updated.extraction_criteria["fields"][0]["key"], "fecha_consignacion"
+        )
 
     def test_serializer_rejects_missing_ollama_assistant_model(self):
         settings_obj = get_or_create_processing_settings()

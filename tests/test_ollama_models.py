@@ -1,6 +1,9 @@
 from django.test import SimpleTestCase, override_settings
 
-from apps.processing.services.ollama_models import get_available_models, list_installed_models
+from apps.processing.services.ollama_models import (
+    get_available_models,
+    list_installed_models,
+)
 
 
 class FakeResponse:
@@ -23,12 +26,16 @@ class OllamaModelsTests(SimpleTestCase):
 
         with patch(
             "apps.processing.services.ollama_models.requests.get",
-            return_value=FakeResponse({"models": [{"name": "gemma3"}, {"name": "llava"}]}),
+            return_value=FakeResponse(
+                {"models": [{"name": "gemma3"}, {"name": "llava"}]}
+            ),
         ) as mocked_get:
             models = list_installed_models()
 
         self.assertEqual(models, ["gemma3", "llava"])
-        self.assertEqual(mocked_get.call_args.args[0], "http://localhost:11434/api/tags")
+        self.assertEqual(
+            mocked_get.call_args.args[0], "http://localhost:11434/api/tags"
+        )
 
     @override_settings(OLLAMA_URL="http://localhost:11434/api/generate")
     def test_returns_empty_list_when_ollama_is_down(self):

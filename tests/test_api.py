@@ -750,7 +750,9 @@ class AssistantChatApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["tool"], "none")
         self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
-        self.assertEqual(payload["message"], "El asistente no esta disponible temporalmente.")
+        self.assertEqual(
+            payload["message"], "El asistente no esta disponible temporalmente."
+        )
         self.assertEqual(payload["query_context"], {})
 
     def test_chat_endpoint_handles_missing_job_without_stack_trace(self):
@@ -767,7 +769,10 @@ class AssistantChatApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["tool"], "none")
         self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
-        self.assertEqual(payload["message"], "El asistente no esta disponible temporalmente. Verifica la configuracion del proveedor LLM e intenta de nuevo.")
+        self.assertEqual(
+            payload["message"],
+            "El asistente no esta disponible temporalmente. Verifica la configuracion del proveedor LLM e intenta de nuevo.",
+        )
         self.assertNotIn("Traceback", payload["reply"])
         self.assertNotIn("Traceback", str(payload["data"]))
 
@@ -789,9 +794,7 @@ class AssistantChatApiTests(TestCase):
         self.assertIn("x-api-key", allowed_headers)
 
     def test_ollama_models_endpoint_returns_snapshot(self):
-        with patch(
-            "apps.processing.services.ollama_models.requests.get"
-        ) as mocked_get:
+        with patch("apps.processing.services.ollama_models.requests.get") as mocked_get:
             mocked_get.return_value.raise_for_status.return_value = None
             mocked_get.return_value.json.return_value = {
                 "models": [

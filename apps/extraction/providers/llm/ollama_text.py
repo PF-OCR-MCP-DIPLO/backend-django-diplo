@@ -89,7 +89,11 @@ class OllamaTextLLMProvider(BaseLLMProvider):
                 criteria_lines.append(
                     f"- {field.get('key')}: {field.get('label')} | type={field.get('type')} | required={bool(field.get('required', False))}"
                 )
-        criteria_block = "\n".join(criteria_lines) if criteria_lines else "- usar los campos base de consignacion"
+        criteria_block = (
+            "\n".join(criteria_lines)
+            if criteria_lines
+            else "- usar los campos base de consignacion"
+        )
         return f"""
 Actua como un Auxiliar Contable Analista de Datos Experto.
 Analiza el siguiente texto OCR y extrae la informacion de la(s) consignacion(es).
