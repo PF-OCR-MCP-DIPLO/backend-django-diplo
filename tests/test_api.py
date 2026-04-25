@@ -671,6 +671,7 @@ class AssistantChatApiTests(TestCase):
             messages=[{"role": "user", "content": "Dame el resumen"}],
             job_id=12,
             errors=2,
+            query_context={"scope": "results"},
         )
 
     def test_chat_endpoint_accepts_job_id_camel_alias(self):
@@ -699,6 +700,7 @@ class AssistantChatApiTests(TestCase):
             messages=[{"role": "user", "content": "Estado del job"}],
             job_id=7,
             errors=0,
+            query_context={},
         )
 
     def test_chat_endpoint_rejects_invalid_payload(self):

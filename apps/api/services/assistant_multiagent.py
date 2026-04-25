@@ -15,6 +15,11 @@ from django.utils import timezone
 from django.utils.timezone import is_aware
 
 from apps.api.services.shared_tools import upload_document_from_path
+from apps.api.services.assistant_tasks import (
+    AssistantTask,
+    build_assistant_task_context,
+    resolve_assistant_task,
+)
 from apps.api.serializers import (
     ExtractionLogSerializer,
     ProcessingSettingsSerializer,
@@ -2377,7 +2382,73 @@ class ResponseAgent:
         tool_payload: Any,
         job_id: int | None,
         errors: int,
+        task: AssistantTask | None = None,
+        task_context: dict[str, Any] | None = None,
     ) -> str:
+        if task is not None and task_context is not None:
+            if task.name == "explain_job_summary" and isinstance(tool_payload, dict):
+                detail = tool_payload.get("detail")
+                if detail:
+                    return str(detail)
+                total_records = tool_payload.get("total_records", 0)
+                total_images = tool_payload.get("total_images", 0)
+                status = tool_payload.get("status", "unknown")
+                return (
+                    f"El job #{job_id} va en estado {status}, con {total_images} imagen(es) y {total_records} registro(s) extraidos."
+                )
+
+            if task.name == "explain_job_findings" and isinstance(tool_payload, dict):
+                findings = task_context.get("findings", {}) if isinstance(task_context, dict) else {}
+                if isinstance(findings, dict):
+                    count = findings.get("rows_with_observations", 0)
+                    return (
+                        f"Encontré {count} fila(s) con hallazgos en el job #{job_id}."
+                    )
+
+            if task.name == "explain_row_issue" and isinstance(task_context, dict):
+                selected_row = task_context.get("selected_row")
+                if isinstance(selected_row, dict):
+                    return (
+                        f"La fila seleccionada tiene referencia {selected_row.get('referencia', 'N/D')} "
+                        f"y valor {selected_row.get('valor', 'N/D')}. "
+                        "Te muestro su contexto para revisar el problema."
+                    )
+
+            if task.name == "suggest_row_correction" and isinstance(task_context, dict):
+                selected_row = task_context.get("selected_row")
+                if isinstance(selected_row, dict):
+                    observations = selected_row.get("observations") or []
+                    suggestion = "Revisa la fila seleccionada y confirma los datos faltantes o inconsistentes."
+                    if observations:
+                        suggestion = (
+                            f"Revisa la fila seleccionada. Observaciones detectadas: {', '.join(str(item) for item in observations[:3])}."
+                        )
+                    return suggestion
+
+            if task.name == "summarize_extraction_logs" and isinstance(tool_payload, list):
+                if tool_payload:
+                    errors_count = sum(1 for item in tool_payload if isinstance(item, dict) and item.get("is_error"))
+                    return (
+                        f"Encontré {len(tool_payload)} log(s) para el job #{job_id}; {errors_count} indican error."
+                    )
+
+            if task.name == "explain_extraction_criteria" and isinstance(task_context, dict):
+                criteria = task_context.get("criteria", {})
+                if isinstance(criteria, dict):
+                    enabled = criteria.get("enabled_fields") or []
+                    if enabled:
+                        return (
+                            "Los criterios activos incluyen: "
+                            + ", ".join(str(item) for item in enabled)
+                            + "."
+                        )
+
+            if task.name == "prepare_export":
+                return "Puedo preparar la exportación, pero necesito tu confirmación antes de ejecutarla."
+
+            if task.name == "prepare_reprocess":
+                return "Puedo reprocesar el job, pero necesito tu confirmación antes de ejecutarlo."
+
         if intent.name == "followup_not_supported":
             return (
                 "No puedo hacer eso con esa instruccion ambigua. "
@@ -2505,6 +2576,8 @@ class ResponseAgent:
                 job_id=job_id,
                 errors=errors,
                 query_context={},
+                task=task,
+                task_context=task_context or {},
             )
 
         conversation = self._last_user_message(messages)
@@ -2533,6 +2606,8 @@ Instrucciones:
 - Si la herramienta ejecutada es get_job_logs, resume la cantidad de logs y el estado general.
 """.strip()
 
+        if task is not None and task_context is not None:
+            prompt += f"\n\nTarea orientada:\n- {task.name}\n- {task.summary}\n\nContexto de tarea:\n{self._safe_json_dump(task_context)}"
         response = self._generate_text(prompt)
         return response.strip() or "No pude generar una respuesta en este momento."
 
@@ -2570,16 +2645,20 @@ Instrucciones:
         job_id: int | None,
         errors: int,
         query_context: dict[str, Any],
+        task: AssistantTask | None = None,
+        task_context: dict[str, Any] | None = None,
     ) -> str:
         conversation = self._format_conversation(messages)
         prompt = f"""
 Eres un asistente conversacional útil para un dashboard de procesamiento.
 Responde de forma natural, breve y clara en espanol.
 
-Contexto:
-- job_id_actual: {job_id if job_id is not None else 'null'}
-- errores_detectados: {errors}
-- query_context: {self._safe_json_dump(query_context)}
+        Contexto:
+        - job_id_actual: {job_id if job_id is not None else 'null'}
+        - errores_detectados: {errors}
+        - query_context: {self._safe_json_dump(query_context)}
+        - tarea_actual: {task.name if task else 'answer_general_question'}
+        - task_context: {self._safe_json_dump(task_context or {})}
 
 Capacidades:
 {chr(10).join(f"- {item}" for item in _CAPABILITIES)}
@@ -2658,9 +2737,11 @@ class AssistantAgent:
         messages: list[dict[str, str]],
         job_id: int | None = None,
         errors: int = 0,
+        query_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._sync_runtime_model()
         try:
+            normalized_query_context = query_context or {}
             intent = self.intent_agent.infer(
                 messages,
                 job_id=job_id,
@@ -2671,6 +2752,22 @@ class AssistantAgent:
                 messages,
                 job_id=job_id,
                 errors=errors,
+            )
+            last_user_message = ""
+            for message in reversed(messages):
+                if message.get("role") == "user":
+                    last_user_message = message.get("content") or ""
+                    break
+            task = resolve_assistant_task(
+                user_message=last_user_message,
+                job_id=job_id,
+                query_context=normalized_query_context,
+                tool=plan.tool,
+            )
+            task_context = build_assistant_task_context(
+                task=task,
+                job_id=job_id,
+                query_context=normalized_query_context,
             )
             if tool_requires_confirmation(plan.tool):
                 return {
@@ -2683,6 +2780,8 @@ class AssistantAgent:
                         "risk_level": get_tool_risk_level(plan.tool),
                         "arguments": plan.arguments,
                     },
+                    "task": task.name,
+                    "task_context": task_context,
                 }
             tool_payload = self.tool_agent.execute(plan, job_id=job_id)
             reply = self.response_agent.compose(
@@ -2692,11 +2791,16 @@ class AssistantAgent:
                 tool_payload,
                 job_id=job_id,
                 errors=errors,
+                task=task,
+                task_context=task_context,
             )
             return {
                 "reply": reply,
+                "message": reply,
                 "tool": plan.tool,
                 "data": tool_payload,
+                "task": task.name,
+                "task_context": task_context,
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             logger.warning(
@@ -2706,6 +2810,10 @@ class AssistantAgent:
             )
             return {
                 "reply": (
+                    "El asistente no esta disponible temporalmente. "
+                    "Verifica la configuracion del proveedor LLM e intenta de nuevo."
+                ),
+                "message": (
                     "El asistente no esta disponible temporalmente. "
                     "Verifica la configuracion del proveedor LLM e intenta de nuevo."
                 ),

@@ -40,6 +40,7 @@ class AssistantChatServiceTests(TestCase):
                     "messages": [{"role": "user", "content": "hola"}],
                     "job_id": 5,
                     "errors": 1,
+                    "query_context": {"scope": "results"},
                 }
             ],
         )
