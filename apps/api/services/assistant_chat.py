@@ -30,6 +30,7 @@ class AssistantChatService:
 
         response = dict(result)
         response.setdefault("reply", "")
+        response.setdefault("message", response.get("reply", ""))
         response.setdefault("tool", "none")
         response.setdefault("data", {})
         response.setdefault("query_context", payload.get("query_context", {}))

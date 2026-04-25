@@ -245,4 +245,5 @@ class AssistantChatView(APIView):
         response = AssistantChatService().answer(serializer.validated_data)
         settings_obj = get_or_create_processing_settings()
         response["show_debug_details"] = bool(settings_obj.assistant_show_debug_details)
+        response["message"] = response.get("message") or response.get("reply", "")
         return Response(response)

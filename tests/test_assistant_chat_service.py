@@ -28,6 +28,7 @@ class AssistantChatServiceTests(SimpleTestCase):
         )
 
         self.assertEqual(response["reply"], "ok")
+        self.assertEqual(response["message"], "ok")
         self.assertEqual(response["tool"], "query_database")
         self.assertEqual(response["data"], [])
         self.assertEqual(response["query_context"], {"scope": "results"})
@@ -51,6 +52,7 @@ class AssistantChatServiceTests(SimpleTestCase):
         )
 
         self.assertEqual(response["reply"], "respuesta sin estructura")
+        self.assertEqual(response["message"], "respuesta sin estructura")
         self.assertEqual(response["tool"], "none")
         self.assertEqual(response["data"], {})
         self.assertEqual(response["query_context"], {})

@@ -662,6 +662,7 @@ class AssistantChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["reply"], "Consulta lista.")
+        self.assertEqual(payload["message"], "Consulta lista.")
         self.assertEqual(payload["tool"], "query_database")
         self.assertEqual(payload["data"], {"rows": []})
         self.assertEqual(payload["query_context"], {"scope": "results"})
@@ -749,6 +750,7 @@ class AssistantChatApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["tool"], "none")
         self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
+        self.assertEqual(payload["message"], "El asistente no esta disponible temporalmente.")
         self.assertEqual(payload["query_context"], {})
 
     def test_chat_endpoint_handles_missing_job_without_stack_trace(self):
@@ -765,6 +767,7 @@ class AssistantChatApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["tool"], "none")
         self.assertEqual(payload["data"]["detail"], "assistant_unavailable")
+        self.assertEqual(payload["message"], "El asistente no esta disponible temporalmente. Verifica la configuracion del proveedor LLM e intenta de nuevo.")
         self.assertNotIn("Traceback", payload["reply"])
         self.assertNotIn("Traceback", str(payload["data"]))
 
