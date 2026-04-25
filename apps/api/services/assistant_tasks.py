@@ -41,10 +41,35 @@ def resolve_assistant_task(
     text = _normalize_text(user_message)
     context = query_context or {}
     has_row_context = any(
-        key in context for key in ("resultId", "rowId", "depositId", "sourceImageId")
+        key in context
+        for key in ("resultId", "rowId", "depositId", "sourceImageId", "selectedRowId")
+    )
+    has_ocr_context = any(
+        key in context
+        for key in (
+            "sourceImageId",
+            "currentImageId",
+            "selectedField",
+            "visibleIssueIds",
+        )
     )
 
-    if tool == "get_job_logs" or "log" in text:
+    if tool == "get_job_logs" or any(
+        term in text
+        for term in (
+            "log",
+            "ocr",
+            "error",
+            "fallo",
+            "fila",
+            "celda",
+            "monto",
+            "fecha",
+            "referencia",
+            "resultado",
+            "export",
+        )
+    ):
         return AssistantTask("summarize_extraction_logs", "Resumir logs del job")
 
     if tool == "get_processing_settings" or any(
@@ -75,8 +100,10 @@ def resolve_assistant_task(
     ):
         return AssistantTask("explain_job_summary", "Explicar resumen del job")
 
-    if has_row_context or any(
-        term in text for term in ("fila", "row", "registro", "celda")
+    if (
+        has_row_context
+        or has_ocr_context
+        or any(term in text for term in ("fila", "row", "registro", "celda"))
     ):
         if any(
             term in text

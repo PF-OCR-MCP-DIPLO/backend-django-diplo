@@ -63,6 +63,16 @@ class AssistantChatServiceTests(TestCase):
         self.assertEqual(response["data"], {})
         self.assertEqual(response["query_context"], {})
 
+    def test_answer_keeps_empty_query_context_when_missing(self):
+        agent = FakeAgent({"reply": "ok"})
+        service = AssistantChatService(agent_factory=lambda: agent)
+
+        response = service.answer(
+            {"messages": [{"role": "user", "content": "hola"}], "query_context": None}
+        )
+
+        self.assertEqual(response["query_context"], {})
+
     def test_assistant_agent_requests_confirmation_for_sensitive_tools(self):
         agent = AssistantAgent()
         agent.intent_agent.infer = lambda *args, **kwargs: AssistantIntent(

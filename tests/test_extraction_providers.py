@@ -79,6 +79,12 @@ class OllamaTextProviderTests(SimpleTestCase):
 
 
 class OllamaVisionProviderTests(SimpleTestCase):
+    def test_prompt_is_bank_consignation_specific(self):
+        prompt = OllamaVisionOCRProvider().build_prompt()
+        self.assertIn("consignaciones bancarias", prompt)
+        self.assertIn("fecha, hora, referencia, valor", prompt)
+        self.assertIn("JSON simple", prompt)
+
     @override_settings(OLLAMA_URL="http://ollama.local", OLLAMA_TIMEOUT=11)
     def test_extract_text_sends_base64_image_payload(self):
         with patch(

@@ -1,10 +1,22 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pathlib import Path
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class UploadDocumentInput(BaseModel):
     file_path: str = Field(description="Absolute path to the .docx file")
+
+    @field_validator("file_path")
+    @classmethod
+    def validate_file_path(cls, value: str) -> str:
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("file_path must be absolute")
+        if path.suffix.lower() != ".docx":
+            raise ValueError("Only .docx files are supported")
+        return value
 
 
 class JobIdInput(BaseModel):

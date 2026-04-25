@@ -23,7 +23,10 @@ from apps.documents.services.upload_service import (
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.job_runner import start_job_processing
-from apps.processing.services.manual_corrections import apply_deposit_corrections, reprocess_source_image
+from apps.processing.services.manual_corrections import (
+    apply_deposit_corrections,
+    reprocess_source_image,
+)
 from apps.processing.services.orchestrator import process_job
 from apps.processing.services.settings_service import (
     available_options,
@@ -190,14 +193,18 @@ class JobDepositReprocessView(APIView):
     permission_classes = [ApiKeyPermission]
 
     def post(self, request, pk, deposit_id):
-        job = get_object_or_404(ProcessRun.objects.prefetch_related("source_images__deposits"), pk=pk)
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related("source_images__deposits"), pk=pk
+        )
         if job.status == ProcessRun.Status.PROCESSING:
             return api_error_response(
                 status_code=status.HTTP_409_CONFLICT,
                 code="job_not_editable",
                 message="No puedes reprocesar resultados mientras la ejecucion sigue procesando.",
             )
-        deposit = job.deposits.select_related("source_image").filter(pk=deposit_id).first()
+        deposit = (
+            job.deposits.select_related("source_image").filter(pk=deposit_id).first()
+        )
         if deposit is None:
             return api_error_response(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -205,7 +212,9 @@ class JobDepositReprocessView(APIView):
                 message="La consignacion no pertenece a esta ejecucion.",
             )
         updated_job = reprocess_source_image(job, deposit.source_image)
-        response_serializer = ProcessRunDetailSerializer(updated_job, context={"request": request})
+        response_serializer = ProcessRunDetailSerializer(
+            updated_job, context={"request": request}
+        )
         return Response(response_serializer.data)
 
 

@@ -90,6 +90,9 @@ def as_snapshot_dict(runtime_config):
     return {
         "ocr_mode": runtime_config.ocr_mode,
         "ocr_provider": runtime_config.ocr_provider,
+        "effective_ocr_engine": runtime_config.ocr_mode,
+        "effective_ocr_provider": runtime_config.ocr_provider,
+        "effective_ocr_model": runtime_config.ocr_model,
         "ocr_model": runtime_config.ocr_model,
         "llm_provider": runtime_config.llm_provider,
         "llm_model": runtime_config.llm_model,

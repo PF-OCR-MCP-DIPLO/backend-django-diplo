@@ -2668,7 +2668,7 @@ class ResponseAgent:
                 messages=messages,
                 job_id=job_id,
                 errors=errors,
-                query_context={},
+                query_context=query_context or {},
                 task=task,
                 task_context=task_context or {},
             )
@@ -2742,6 +2742,7 @@ Instrucciones:
         task_context: dict[str, Any] | None = None,
     ) -> str:
         conversation = self._format_conversation(messages)
+        context_hint = self._format_context_hint(query_context)
         prompt = f"""
 Eres un asistente conversacional útil para un dashboard de procesamiento.
 Responde de forma natural, breve y clara en espanol.
@@ -2749,6 +2750,7 @@ Responde de forma natural, breve y clara en espanol.
         Contexto:
         - job_id_actual: {job_id if job_id is not None else 'null'}
         - errores_detectados: {errors}
+        - contexto_activo: {context_hint}
         - query_context: {self._safe_json_dump(query_context)}
         - tarea_actual: {task.name if task else 'answer_general_question'}
         - task_context: {self._safe_json_dump(task_context or {})}
@@ -2769,6 +2771,28 @@ Instrucciones:
             response.strip()
             or "Hola, puedo ayudarte con jobs, logs, correcciones, settings y exportación."
         )
+
+    def _format_context_hint(self, query_context: dict[str, Any]) -> str:
+        if not query_context:
+            return "sin contexto activo"
+        scope = (
+            query_context.get("contextScope") or query_context.get("page") or "general"
+        )
+        parts = [f"scope={scope}"]
+        for key in (
+            "jobId",
+            "selectedRowId",
+            "selectedField",
+            "depositId",
+            "sourceImageId",
+            "currentImageId",
+        ):
+            if key in query_context and query_context.get(key) is not None:
+                parts.append(f"{key}={query_context.get(key)}")
+        visible = query_context.get("visibleIssueIds")
+        if isinstance(visible, list) and visible:
+            parts.append(f"visibleIssueIds={visible[:8]}")
+        return ", ".join(parts)
 
 
 class AssistantAgent:

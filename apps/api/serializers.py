@@ -282,7 +282,6 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             )
             if not effective_ocr_model or ":" in effective_ocr_model:
                 attrs["ocr_model"] = "spa"
-            attrs["ocr_provider"] = "ollama"
         if errors:
             raise serializers.ValidationError(errors)
         attrs["extraction_criteria"] = normalize_extraction_criteria(

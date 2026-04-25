@@ -37,7 +37,7 @@ def _runtime_error_payload(error: Exception) -> str:
             "ok": False,
             "status_code": 500,
             "detail": str(error),
-            "payload": None,
+            "data": None,
         }
     )
 
@@ -47,7 +47,9 @@ def _run_local_tool(
 ) -> str:
     try:
         payload = execute_tool(tool=tool, arguments=arguments, job_id=job_id)
-        return _as_json({"ok": True, "data": payload})
+        return _as_json(
+            {"ok": True, "data": payload, "status_code": None, "detail": None}
+        )
     except Exception as error:  # pragma: no cover - defensive fallback
         return _runtime_error_payload(error)
 
@@ -234,6 +236,14 @@ def query_database(query: dict[str, Any]) -> str:
 @mcp.tool()
 def query_database_sql(sql: str, limit: int = 100) -> str:
     """Execute a read-only SQL query when enabled by backend settings."""
+    if not sql.strip().lower().startswith(("select", "with")):
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 400,
+                "detail": "query_database_sql is read-only",
+            }
+        )
     return _run_local_tool("query_database_sql", {"sql": sql, "limit": limit})
 
 
