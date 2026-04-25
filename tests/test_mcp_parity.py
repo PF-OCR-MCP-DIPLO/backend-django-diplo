@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 
+from apps.api.services.assistant_chat import AssistantChatService
 from apps.api.services.assistant_multiagent import AssistantPlan, ToolExecutionAgent
 from mcp_server import server as mcp_server
 from tests.test_api import PNG_ONE, PNG_TWO, build_docx_with_images
@@ -50,6 +51,29 @@ class McpParityTests(TestCase):
             self._mcp_payload(mcp_server.get_processing_settings_options()),
             self._multiagent_payload("get_processing_settings_options"),
         )
+
+    def test_assistant_chat_matches_service_contract(self):
+        service = AssistantChatService()
+        expected = service.finalize_response(
+            service.answer(
+                {
+                    "messages": [{"role": "user", "content": "hola"}],
+                    "query_context": {"scope": "results"},
+                }
+            ),
+            show_debug_details=False,
+        )
+
+        payload = self._mcp_payload(
+            mcp_server.assistant_chat(
+                messages=[{"role": "user", "content": "hola"}],
+                query_context={"scope": "results"},
+            )
+        )
+
+        self.assertEqual(payload["query_context"], expected["query_context"])
+        self.assertEqual(payload["tool"], expected["tool"])
+        self.assertEqual(payload["show_debug_details"], expected["show_debug_details"])
 
     @override_settings(MCP_ENABLE_MUTATIONS=True)
     def test_deposit_correction_tool_matches_multiagent(self):

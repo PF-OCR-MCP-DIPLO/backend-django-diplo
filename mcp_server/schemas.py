@@ -37,9 +37,22 @@ class UpdateProcessingSettingsInput(BaseModel):
     ocr_api_key: str | None = None
     llm_api_key: str | None = None
     request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)
+    assistant_show_debug_details: bool | None = None
 
     def to_partial_dict(self) -> dict:
         return self.model_dump(exclude_none=True)
+
+
+class AssistantChatMessageInput(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantChatInput(BaseModel):
+    messages: list[AssistantChatMessageInput]
+    job_id: int | None = Field(default=None, ge=1)
+    errors: int = Field(default=0, ge=0)
+    query_context: dict = Field(default_factory=dict)
 
 
 class DepositCorrectionInput(BaseModel):

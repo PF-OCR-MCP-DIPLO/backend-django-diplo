@@ -60,6 +60,22 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertIn("fields", runtime.extraction_criteria)
         self.assertFalse(runtime.assistant_show_debug_details)
 
+    def test_available_options_expose_low_ram_assistant_recommendation(self):
+        from apps.processing.services.settings_service import available_options
+
+        payload = available_options()
+
+        self.assertEqual(
+            payload["assistant_model_recommendations"]["low_ram"], "qwen3:1.7b"
+        )
+        self.assertEqual(
+            payload["assistant_model_recommendations"]["balanced"], "llama3.2:3b"
+        )
+        self.assertIn(
+            "qwen3:1.7b",
+            payload["assistant_model_recommendations"]["helper_text"],
+        )
+
     def test_processing_settings_serializer_normalizes_extraction_criteria_output(self):
         settings_obj = get_or_create_processing_settings()
         settings_obj.extraction_criteria = '{"fields":[{"key":"","type":"weird"}]}'

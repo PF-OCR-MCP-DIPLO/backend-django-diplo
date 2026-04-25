@@ -234,7 +234,10 @@ def extract_raw_text(source_image, runtime_config):
     attempts.append(primary_attempt)
     selected = primary_result
     fallback_used = False
-    if runtime_config.ocr_mode == "auto" or primary_attempt.score < 8:
+    # Only the explicit auto mode should chain providers. When the user pins
+    # vision or tesseract we keep that choice stable instead of silently
+    # cascading into another engine after a low score.
+    if runtime_config.ocr_mode == "auto":
         fallback_result, fallback_attempt = _attempt_result(
             engine="vision" if fallback_runner is _run_vision else "tesseract",
             provider=(

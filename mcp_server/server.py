@@ -12,8 +12,12 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "MCP_back.settings")
 django.setup()
 
 from apps.api.services.shared_tools import upload_document_from_path
+from apps.api.services.assistant_chat import AssistantChatService
+from apps.api.serializers import AssistantChatSerializer
 from apps.api.services.tool_dispatcher import execute_tool
+from apps.processing.services.settings_service import get_or_create_processing_settings
 from mcp_server.schemas import (
+    AssistantChatInput,
     DepositCorrectionInput,
     JobIdInput,
     UpdateProcessingSettingsInput,
@@ -40,6 +44,26 @@ def _runtime_error_payload(error: Exception) -> str:
             "data": None,
         }
     )
+
+
+def _build_assistant_response(payload: dict[str, Any]) -> dict[str, Any]:
+    serializer = AssistantChatSerializer(data=payload)
+    if not serializer.is_valid():
+        return {
+            "ok": False,
+            "status_code": 400,
+            "detail": "validation_error",
+            "data": serializer.errors,
+        }
+    service = AssistantChatService()
+    response = service.answer(serializer.validated_data)
+    response = service.finalize_response(
+        response,
+        show_debug_details=bool(
+            get_or_create_processing_settings().assistant_show_debug_details
+        ),
+    )
+    return {"ok": True, "status_code": 200, "detail": None, "data": response}
 
 
 def _run_local_tool(
@@ -179,6 +203,30 @@ def get_processing_settings_options() -> str:
 
 
 @mcp.tool()
+def assistant_chat(
+    messages: list[dict[str, str]],
+    job_id: int | None = None,
+    errors: int = 0,
+    query_context: dict[str, Any] | None = None,
+) -> str:
+    """Run the assistant chat pipeline with the same JSON contract as the backend API."""
+    args = AssistantChatInput(
+        messages=messages,
+        job_id=job_id,
+        errors=errors,
+        query_context=query_context or {},
+    )
+    payload = {
+        "messages": [item.model_dump() for item in args.messages],
+        "errors": args.errors,
+        "query_context": args.query_context,
+    }
+    if args.job_id is not None:
+        payload["job_id"] = args.job_id
+    return _as_json(_build_assistant_response(payload))
+
+
+@mcp.tool()
 def update_processing_settings(
     ocr_mode: str | None = None,
     ocr_provider: str | None = None,
@@ -188,6 +236,7 @@ def update_processing_settings(
     assistant_provider: str | None = None,
     assistant_model: str | None = None,
     assistant_api_key: str | None = None,
+    assistant_show_debug_details: bool | None = None,
     assistant_temperature: float | None = None,
     assistant_num_predict: int | None = None,
     ocr_api_key: str | None = None,
@@ -212,6 +261,7 @@ def update_processing_settings(
         assistant_provider=assistant_provider,
         assistant_model=assistant_model,
         assistant_api_key=assistant_api_key,
+        assistant_show_debug_details=assistant_show_debug_details,
         assistant_temperature=assistant_temperature,
         assistant_num_predict=assistant_num_predict,
         ocr_api_key=ocr_api_key,

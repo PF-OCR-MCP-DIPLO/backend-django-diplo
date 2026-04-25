@@ -133,6 +133,29 @@ class BackendApiClient:
         )
         return self._handle_response(response)
 
+    def assistant_chat(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        job_id: int | None = None,
+        errors: int = 0,
+        query_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "messages": messages,
+            "errors": errors,
+            "query_context": query_context or {},
+        }
+        if job_id is not None:
+            payload["job_id"] = job_id
+        response = requests.post(
+            f"{self.base_url}/assistant/chat/",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=payload,
+            timeout=self.timeout,
+        )
+        return self._handle_response(response)
+
     def update_processing_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         response = requests.patch(
             f"{self.base_url}/processing/settings/",

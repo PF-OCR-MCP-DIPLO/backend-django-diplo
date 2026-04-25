@@ -10,6 +10,7 @@ from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
 from apps.processing.models import ProcessRun
+from apps.processing.services.settings_service import get_or_create_processing_settings
 
 PNG_ONE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR2xQAAAAASUVORK5CYII="
@@ -953,6 +954,63 @@ class AssistantChatApiTests(TestCase):
         )
         self.assertNotIn("Traceback", payload["reply"])
         self.assertNotIn("Traceback", str(payload["data"]))
+
+    def test_chat_endpoint_hides_technical_provider_errors_when_debug_is_disabled(self):
+        with patch(
+            "apps.api.services.assistant_chat.AssistantAgent"
+        ) as mocked_agent_class:
+            mocked_agent = mocked_agent_class.return_value
+            mocked_agent.answer.return_value = {
+                "reply": "No disponible",
+                "tool": "none",
+                "data": {
+                    "detail": "assistant_provider_error",
+                    "error": "stack interno",
+                },
+                "debug": {"errors": ["stack interno"]},
+            }
+
+            response = self.client.post(
+                "/api/assistant/chat/",
+                {"messages": [{"role": "user", "content": "Hola"}]},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["data"]["detail"], "assistant_provider_error")
+        self.assertNotIn("error", payload["data"])
+        self.assertEqual(payload["debug"]["errors"], [])
+
+    def test_chat_endpoint_keeps_technical_provider_errors_when_debug_is_enabled(self):
+        settings_obj = get_or_create_processing_settings()
+        settings_obj.assistant_show_debug_details = True
+        settings_obj.save(update_fields=["assistant_show_debug_details"])
+
+        with patch(
+            "apps.api.services.assistant_chat.AssistantAgent"
+        ) as mocked_agent_class:
+            mocked_agent = mocked_agent_class.return_value
+            mocked_agent.answer.return_value = {
+                "reply": "No disponible",
+                "tool": "none",
+                "data": {
+                    "detail": "assistant_provider_error",
+                    "error": "stack interno",
+                },
+                "debug": {"errors": ["stack interno"]},
+            }
+
+            response = self.client.post(
+                "/api/assistant/chat/",
+                {"messages": [{"role": "user", "content": "Hola"}]},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["data"]["error"], "stack interno")
+        self.assertEqual(payload["debug"]["errors"], ["stack interno"])
 
     def test_chat_endpoint_cors_allows_frontend_api_key_header(self):
         response = self.client.options(

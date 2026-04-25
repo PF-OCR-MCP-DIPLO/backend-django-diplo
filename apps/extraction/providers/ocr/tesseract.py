@@ -3,9 +3,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageFile, ImageFilter, ImageOps
 
 from apps.extraction.providers.ocr.base import BaseOCRProvider
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 def resolve_tesseract_language(model_name):
@@ -17,6 +19,11 @@ def resolve_tesseract_language(model_name):
 
 
 def preprocess_image_for_ocr(image_file, *, binarize=False, sharpen=False):
+    if hasattr(image_file, "open"):
+        try:
+            image_file.open("rb")
+        except Exception:
+            pass
     image_file.seek(0)
     with Image.open(image_file) as image:
         image = ImageOps.exif_transpose(image)

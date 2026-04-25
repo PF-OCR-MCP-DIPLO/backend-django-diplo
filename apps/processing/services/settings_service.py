@@ -18,6 +18,8 @@ OCR_PROVIDERS = [
     ProcessingSettings.Provider.GEMINI,
     ProcessingSettings.Provider.DEEPSEEK,
 ]
+LOW_RAM_ASSISTANT_MODEL = "qwen3:1.7b"
+STANDARD_ASSISTANT_MODEL = "llama3.2:3b"
 LLM_PROVIDERS = [
     ProcessingSettings.Provider.OLLAMA,
     ProcessingSettings.Provider.OPENAI,
@@ -54,7 +56,7 @@ def get_or_create_processing_settings():
         "llm_provider": ProcessingSettings.Provider.OLLAMA,
         "llm_model": settings.OLLAMA_MODEL,
         "assistant_provider": ProcessingSettings.Provider.OLLAMA,
-        "assistant_model": settings.OLLAMA_MODEL,
+        "assistant_model": LOW_RAM_ASSISTANT_MODEL,
         "assistant_show_debug_details": False,
         "request_timeout_seconds": settings.OLLAMA_TIMEOUT,
         "extraction_criteria": default_extraction_criteria(),
@@ -114,7 +116,12 @@ def available_options():
         ollama_models = list_installed_models()
     except Exception:
         ollama_models = []
-    fallback_llm_models = [settings.OLLAMA_MODEL, "llama3.2:3b", "qwen2.5:3b"]
+    fallback_llm_models = [
+        LOW_RAM_ASSISTANT_MODEL,
+        STANDARD_ASSISTANT_MODEL,
+        settings.OLLAMA_MODEL,
+        "qwen2.5:3b",
+    ]
     fallback_ocr_models = [settings.OLLAMA_VISION_MODEL, "llava:7b", "moondream"]
     provider_models = {
         "ollama": {
@@ -141,6 +148,14 @@ def available_options():
         },
         "provider_models": provider_models,
         "provider_requirements": provider_requirements,
+        "assistant_model_recommendations": {
+            "low_ram": LOW_RAM_ASSISTANT_MODEL,
+            "balanced": STANDARD_ASSISTANT_MODEL,
+            "helper_text": (
+                "Para equipos con ~5–6 GiB libres, usa qwen3:1.7b. "
+                "Si tienes más memoria disponible, llama3.2:3b puede ser mejor para agente/tool use."
+            ),
+        },
     }
 
 

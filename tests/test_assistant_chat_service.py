@@ -1,6 +1,7 @@
 from django.test import TestCase
 
 from apps.api.services.assistant_chat import AssistantChatService
+from apps.api.services.assistant_llm import AssistantProviderError
 from apps.api.services.assistant_multiagent import (
     AssistantAgent,
     AssistantIntent,
@@ -16,6 +17,11 @@ class FakeAgent:
     def answer(self, **kwargs):
         self.calls.append(kwargs)
         return self.result
+
+
+class BrokenAgent:
+    def answer(self, **kwargs):
+        raise RuntimeError("boom")
 
 
 class AssistantChatServiceTests(TestCase):
@@ -72,6 +78,73 @@ class AssistantChatServiceTests(TestCase):
         )
 
         self.assertEqual(response["query_context"], {})
+
+    def test_answer_converts_missing_or_invalid_query_context_to_empty_dict(self):
+        agent = FakeAgent({"reply": "ok"})
+        service = AssistantChatService(agent_factory=lambda: agent)
+
+        response = service.answer(
+            {"messages": [{"role": "user", "content": "hola"}], "query_context": []}
+        )
+
+        self.assertEqual(response["query_context"], {})
+        self.assertEqual(agent.calls[0]["query_context"], {})
+
+    def test_answer_returns_controlled_fallback_when_agent_raises(self):
+        service = AssistantChatService(agent_factory=lambda: BrokenAgent())
+
+        response = service.answer(
+            {
+                "messages": [{"role": "user", "content": "hola"}],
+                "query_context": {"scope": "results"},
+            }
+        )
+
+        self.assertEqual(response["tool"], "none")
+        self.assertEqual(response["data"]["detail"], "assistant_unavailable")
+        self.assertEqual(response["query_context"], {"scope": "results"})
+        self.assertTrue(response["debug"]["fallback_used"])
+
+    def test_finalize_response_hides_technical_error_details_by_default(self):
+        service = AssistantChatService(agent_factory=lambda: FakeAgent({"reply": "ok"}))
+
+        response = service.finalize_response(
+            {
+                "reply": "No disponible",
+                "tool": "none",
+                "data": {
+                    "detail": "assistant_provider_error",
+                    "error": "traceback interno",
+                },
+                "debug": {"errors": ["traceback interno"]},
+                "query_context": {},
+            },
+            show_debug_details=False,
+        )
+
+        self.assertEqual(response["data"]["detail"], "assistant_provider_error")
+        self.assertNotIn("error", response["data"])
+        self.assertEqual(response["debug"]["errors"], [])
+
+    def test_finalize_response_keeps_technical_error_details_when_debug_is_enabled(self):
+        service = AssistantChatService(agent_factory=lambda: FakeAgent({"reply": "ok"}))
+
+        response = service.finalize_response(
+            {
+                "reply": "No disponible",
+                "tool": "none",
+                "data": {
+                    "detail": "assistant_provider_error",
+                    "error": "detalle tecnico",
+                },
+                "debug": {"errors": ["detalle tecnico"]},
+                "query_context": {},
+            },
+            show_debug_details=True,
+        )
+
+        self.assertEqual(response["data"]["error"], "detalle tecnico")
+        self.assertEqual(response["debug"]["errors"], ["detalle tecnico"])
 
     def test_assistant_agent_requests_confirmation_for_sensitive_tools(self):
         agent = AssistantAgent()
@@ -234,3 +307,51 @@ class AssistantChatServiceTests(TestCase):
         self.assertEqual(response["tool"], "none")
         self.assertTrue(response["data"]["requires_clarification"])
         self.assertNotIn("pending_action", response["query_context"])
+
+    def test_assistant_agent_does_not_raise_name_error_when_runtime_sync_fails(self):
+        agent = AssistantAgent()
+        agent._sync_runtime_model = lambda: (_ for _ in ()).throw(RuntimeError("sync failed"))
+
+        response = agent.answer(
+            messages=[{"role": "user", "content": "hola"}],
+            query_context={"scope": "results"},
+        )
+
+        self.assertEqual(response["tool"], "none")
+        self.assertEqual(response["data"]["detail"], "assistant_unavailable")
+        self.assertEqual(response["query_context"], {"scope": "results"})
+
+    def test_assistant_agent_handles_provider_memory_error_with_recommendation(self):
+        agent = AssistantAgent()
+        agent.intent_agent.infer = lambda *args, **kwargs: AssistantIntent(
+            name="generic_chat",
+            confidence=0.8,
+            tool_hint="none",
+            summary="chat",
+        )
+        agent.planner_agent.plan = lambda *args, **kwargs: AssistantPlan(
+            tool="none",
+            arguments={},
+            intent_name="generic_chat",
+            intent_summary="chat",
+        )
+
+        def _raise(*args, **kwargs):
+            raise AssistantProviderError(
+                provider="ollama",
+                message="El modelo no cabe en memoria.",
+                detail="model requires more system memory (5.4 GiB) than is available (5.2 GiB)",
+                status_code=500,
+                code="assistant_model_too_large",
+            )
+
+        agent.response_agent.compose = _raise
+
+        response = agent.answer(
+            messages=[{"role": "user", "content": "hola"}],
+            query_context={},
+        )
+
+        self.assertEqual(response["tool"], "none")
+        self.assertEqual(response["data"]["detail"], "assistant_model_too_large")
+        self.assertIn("qwen3:1.7b", response["message"])

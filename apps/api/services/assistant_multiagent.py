@@ -116,6 +116,20 @@ _CANCEL_WORDS = {"cancelar", "cancela", "no", "anular", "detener"}
 logger = logging.getLogger(__name__)
 
 
+def _assistant_memory_recommendation() -> str:
+    return (
+        "El modelo local configurado no cabe en la memoria disponible. "
+        "Para equipos con poca RAM usa qwen3:1.7b. "
+        "Si tienes más memoria disponible, llama3.2:3b puede ser una alternativa."
+    )
+
+
+def _normalize_query_context(raw_query_context: Any) -> dict[str, Any]:
+    if not isinstance(raw_query_context, dict):
+        return {}
+    return dict(raw_query_context)
+
+
 def _normalize_text(value: str) -> str:
     return value.strip().lower()
 
@@ -2856,9 +2870,14 @@ class AssistantAgent:
         errors: int = 0,
         query_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        self._sync_runtime_model()
+        normalized_query_context = _normalize_query_context(query_context)
+        request_id = str(
+            normalized_query_context.get("request_id")
+            or normalized_query_context.get("requestId")
+            or ""
+        ).strip() or "n/a"
         try:
-            normalized_query_context = query_context or {}
+            self._sync_runtime_model()
             pending_action = self._extract_pending_action(normalized_query_context)
             last_user_message = self._last_user_message(messages)
 
@@ -3025,32 +3044,43 @@ class AssistantAgent:
             }
         except AssistantProviderError as exc:
             logger.warning(
-                "Assistant provider error during answer pipeline: provider=%s status=%s detail=%s",
+                "Assistant provider error during answer pipeline: provider=%s model=%s request_id=%s stage=answer status=%s code=%s detail=%s",
                 exc.provider,
+                self.model,
+                request_id,
                 exc.status_code,
+                exc.code,
                 exc.detail,
             )
+            reply = (
+                _assistant_memory_recommendation()
+                if exc.code == "assistant_model_too_large"
+                else "El asistente no esta disponible temporalmente. Hubo un problema con el proveedor de texto."
+            )
             return {
-                "reply": (
-                    "El asistente no esta disponible temporalmente. "
-                    "Hubo un problema con el proveedor de texto."
-                ),
-                "message": (
-                    "El asistente no esta disponible temporalmente. "
-                    "Hubo un problema con el proveedor de texto."
-                ),
+                "reply": reply,
+                "message": reply,
                 "tool": "none",
                 "data": {
-                    "detail": "assistant_provider_error",
+                    "detail": exc.code,
                     "provider": exc.provider,
                     "status_code": exc.status_code,
                     "error": exc.detail,
+                },
+                "debug": {
+                    "intent": None,
+                    "confidence": None,
+                    "selected_tool": "none",
+                    "fallback_used": True,
+                    "errors": [f"{exc.provider}:{exc.code}:{exc.detail}"],
                 },
                 "query_context": clear_pending_action(normalized_query_context),
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             logger.warning(
-                "Assistant agent unavailable during answer pipeline: %s: %s",
+                "Assistant agent unavailable during answer pipeline: model=%s request_id=%s stage=answer error=%s: %s",
+                self.model,
+                request_id,
                 exc.__class__.__name__,
                 exc,
             )
@@ -3067,6 +3097,13 @@ class AssistantAgent:
                 "data": {
                     "detail": "assistant_unavailable",
                     "error": str(exc),
+                },
+                "debug": {
+                    "intent": None,
+                    "confidence": None,
+                    "selected_tool": "none",
+                    "fallback_used": True,
+                    "errors": [f"{exc.__class__.__name__}: {exc}"],
                 },
                 "query_context": clear_pending_action(normalized_query_context),
             }

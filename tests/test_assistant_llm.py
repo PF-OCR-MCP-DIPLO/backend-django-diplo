@@ -34,6 +34,11 @@ class FakeSession:
         return self.response
 
 
+class TimeoutSession:
+    def post(self, url: str, **kwargs):
+        raise requests.Timeout("timeout")
+
+
 class AssistantTextClientTests(SimpleTestCase):
     @override_settings(OLLAMA_URL="http://ollama.local/api/generate")
     def test_ollama_generate_uses_configured_payload(self):
@@ -126,3 +131,48 @@ class AssistantTextClientTests(SimpleTestCase):
         self.assertEqual(ctx.exception.provider, "ollama")
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertIn("model not found", ctx.exception.detail)
+        self.assertEqual(ctx.exception.code, "provider_unavailable")
+
+    @override_settings(OLLAMA_URL="http://ollama.local/api/generate")
+    def test_ollama_generate_maps_memory_error_to_domain_code(self):
+        session = FakeSession(
+            {
+                "error": "model requires more system memory (5.4 GiB) than is available (5.2 GiB)"
+            }
+        )
+
+        def _raise_for_status():
+            raise requests.HTTPError(response=session.response)
+
+        session.response.raise_for_status = _raise_for_status
+        client = AssistantTextClient(session=session)
+
+        with self.assertRaises(AssistantProviderError) as ctx:
+            client.generate(
+                "hola",
+                TextGenerationConfig(
+                    provider="ollama",
+                    model="llama3.2:3b",
+                    timeout=9,
+                ),
+            )
+
+        self.assertEqual(ctx.exception.code, "assistant_model_too_large")
+        self.assertIn("qwen3:1.7b", str(ctx.exception))
+
+    @override_settings(OLLAMA_URL="http://ollama.local/api/generate")
+    def test_ollama_generate_maps_timeout_to_controlled_error(self):
+        client = AssistantTextClient(session=TimeoutSession())
+
+        with self.assertRaises(AssistantProviderError) as ctx:
+            client.generate(
+                "hola",
+                TextGenerationConfig(
+                    provider="ollama",
+                    model="qwen3:1.7b",
+                    timeout=3,
+                ),
+            )
+
+        self.assertEqual(ctx.exception.code, "provider_timeout")
+        self.assertEqual(ctx.exception.provider, "ollama")
