@@ -47,8 +47,15 @@ def prepare_job_for_processing(process_run):
     runtime_config = get_runtime_config()
     process_run = ProcessRun.objects.get(pk=process_run.pk)
     with transaction.atomic():
+        generated_text_images = process_run.source_images.filter(
+            sequence_index=0, source_name="document_text"
+        )
+        generated_text_images.delete()
         process_run.deposits.all().delete()
         process_run.extraction_logs.all().delete()
+        if process_run.excel_file:
+            process_run.excel_file.delete(save=False)
+            process_run.excel_file = None
         process_run.status = ProcessRun.Status.PROCESSING
         process_run.started_at = timezone.now()
         process_run.finished_at = None
@@ -62,6 +69,7 @@ def prepare_job_for_processing(process_run):
                 "finished_at",
                 "error_message",
                 "total_records",
+                "excel_file",
                 "provider_config_snapshot",
                 "updated_at",
             ]

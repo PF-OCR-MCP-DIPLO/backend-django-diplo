@@ -2871,11 +2871,14 @@ class AssistantAgent:
         query_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_query_context = _normalize_query_context(query_context)
-        request_id = str(
-            normalized_query_context.get("request_id")
-            or normalized_query_context.get("requestId")
-            or ""
-        ).strip() or "n/a"
+        request_id = (
+            str(
+                normalized_query_context.get("request_id")
+                or normalized_query_context.get("requestId")
+                or ""
+            ).strip()
+            or "n/a"
+        )
         try:
             self._sync_runtime_model()
             pending_action = self._extract_pending_action(normalized_query_context)

@@ -73,8 +73,7 @@ class AssistantTextClient:
         return AssistantProviderError(
             provider="ollama",
             status_code=getattr(response, "status_code", None),
-            detail=normalized_detail
-            or "Ollama no pudo generar texto en este momento.",
+            detail=normalized_detail or "Ollama no pudo generar texto en este momento.",
             code="provider_unavailable",
             message=(
                 f"Ollama devolvio {getattr(response, 'status_code', 'un error')} "

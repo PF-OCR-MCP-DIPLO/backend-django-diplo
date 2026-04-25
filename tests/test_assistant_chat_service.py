@@ -126,7 +126,9 @@ class AssistantChatServiceTests(TestCase):
         self.assertNotIn("error", response["data"])
         self.assertEqual(response["debug"]["errors"], [])
 
-    def test_finalize_response_keeps_technical_error_details_when_debug_is_enabled(self):
+    def test_finalize_response_keeps_technical_error_details_when_debug_is_enabled(
+        self,
+    ):
         service = AssistantChatService(agent_factory=lambda: FakeAgent({"reply": "ok"}))
 
         response = service.finalize_response(
@@ -310,7 +312,9 @@ class AssistantChatServiceTests(TestCase):
 
     def test_assistant_agent_does_not_raise_name_error_when_runtime_sync_fails(self):
         agent = AssistantAgent()
-        agent._sync_runtime_model = lambda: (_ for _ in ()).throw(RuntimeError("sync failed"))
+        agent._sync_runtime_model = lambda: (_ for _ in ()).throw(
+            RuntimeError("sync failed")
+        )
 
         response = agent.answer(
             messages=[{"role": "user", "content": "hola"}],

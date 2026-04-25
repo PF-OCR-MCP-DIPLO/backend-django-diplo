@@ -22,6 +22,7 @@ from apps.documents.services.upload_service import (
 )
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
+from apps.processing.services.job_cleanup import delete_job_and_files
 from apps.processing.services.job_runner import start_job_processing
 from apps.processing.services.manual_corrections import (
     apply_deposit_corrections,
@@ -89,6 +90,20 @@ class JobDetailView(APIView):
         serializer = ProcessRunDetailSerializer(job, context={"request": request})
         return Response(serializer.data)
 
+    def delete(self, request, pk):
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related("source_images"), pk=pk
+        )
+        if job.status == ProcessRun.Status.PROCESSING:
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_delete_conflict",
+                message="No puedes borrar una ejecucion mientras sigue procesando.",
+                details={"status": job.status},
+            )
+        delete_job_and_files(job)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class JobProcessView(APIView):
     authentication_classes = []
@@ -96,13 +111,21 @@ class JobProcessView(APIView):
     throttle_scope = "jobs_process"
 
     def post(self, request, pk):
-        job = get_object_or_404(ProcessRun, pk=pk)
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related("source_images__deposits"), pk=pk
+        )
         if job.status == ProcessRun.Status.PROCESSING:
             return api_error_response(
                 status_code=status.HTTP_409_CONFLICT,
                 code="job_already_processing",
                 message="Esta ejecucion ya se encuentra en procesamiento.",
             )
+        if job.status in (
+            ProcessRun.Status.COMPLETED,
+            ProcessRun.Status.COMPLETED_WITH_ERRORS,
+        ):
+            serializer = ProcessRunDetailSerializer(job, context={"request": request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
         if settings.PROCESS_JOBS_ASYNC:
             started = start_job_processing(job)
             serializer = ProcessRunDetailSerializer(
@@ -266,8 +289,6 @@ class AssistantChatView(APIView):
         return Response(
             service.finalize_response(
                 response,
-                show_debug_details=bool(
-                    settings_obj.assistant_show_debug_details
-                ),
+                show_debug_details=bool(settings_obj.assistant_show_debug_details),
             )
         )

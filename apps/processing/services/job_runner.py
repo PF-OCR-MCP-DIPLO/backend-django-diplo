@@ -18,6 +18,15 @@ _running_jobs_lock = threading.Lock()
 
 
 def start_job_processing(process_run: ProcessRun) -> ProcessRun:
+    process_run = ProcessRun.objects.get(pk=process_run.pk)
+    if process_run.status == ProcessRun.Status.PROCESSING:
+        raise RuntimeError("job_already_processing")
+    if process_run.status in (
+        ProcessRun.Status.COMPLETED,
+        ProcessRun.Status.COMPLETED_WITH_ERRORS,
+    ):
+        return process_run
+
     with _running_jobs_lock:
         if process_run.pk in _running_jobs:
             raise RuntimeError("job_already_processing")
