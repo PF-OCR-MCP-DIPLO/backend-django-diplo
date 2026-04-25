@@ -109,6 +109,7 @@ class ProcessingSettings(models.Model):
     assistant_api_key = models.CharField(max_length=255, blank=True)
     assistant_temperature = models.FloatField(default=0.2)
     assistant_num_predict = models.PositiveIntegerField(default=256)
+    assistant_show_debug_details = models.BooleanField(default=False)
     request_timeout_seconds = models.PositiveIntegerField(default=320)
     extraction_criteria = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

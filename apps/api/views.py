@@ -28,6 +28,7 @@ from apps.processing.services.orchestrator import process_job
 from apps.processing.services.settings_service import (
     available_options,
     get_or_create_processing_settings,
+    get_ollama_models_snapshot,
 )
 
 
@@ -226,6 +227,14 @@ class ProcessingSettingsOptionsView(APIView):
         return Response(available_options())
 
 
+class OllamaModelsView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response(get_ollama_models_snapshot())
+
+
 class AssistantChatView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -233,4 +242,7 @@ class AssistantChatView(APIView):
     def post(self, request):
         serializer = AssistantChatSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        return Response(AssistantChatService().answer(serializer.validated_data))
+        response = AssistantChatService().answer(serializer.validated_data)
+        settings_obj = get_or_create_processing_settings()
+        response["show_debug_details"] = bool(settings_obj.assistant_show_debug_details)
+        return Response(response)

@@ -137,6 +137,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         required=False, allow_blank=True, write_only=True, max_length=255
     )
     extraction_criteria = serializers.JSONField(required=False)
+    assistant_show_debug_details = serializers.BooleanField(required=False)
 
     class Meta:
         model = ProcessingSettings
@@ -152,6 +153,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "llm_api_key",
             "assistant_api_key",
             "extraction_criteria",
+            "assistant_show_debug_details",
             "has_ocr_api_key",
             "has_llm_api_key",
             "has_assistant_api_key",
@@ -191,6 +193,10 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         llm_model = attrs.get("llm_model", getattr(instance, "llm_model", ""))
         assistant_model = attrs.get(
             "assistant_model", getattr(instance, "assistant_model", "")
+        )
+        assistant_show_debug_details = attrs.get(
+            "assistant_show_debug_details",
+            getattr(instance, "assistant_show_debug_details", False),
         )
         extraction_criteria = attrs.get(
             "extraction_criteria", getattr(instance, "extraction_criteria", {})
@@ -251,6 +257,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
         attrs["extraction_criteria"] = normalize_extraction_criteria(extraction_criteria)
+        attrs["assistant_show_debug_details"] = bool(assistant_show_debug_details)
         return attrs
 
 

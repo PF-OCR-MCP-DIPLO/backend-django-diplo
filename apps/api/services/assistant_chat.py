@@ -33,4 +33,5 @@ class AssistantChatService:
         response.setdefault("tool", "none")
         response.setdefault("data", {})
         response.setdefault("query_context", payload.get("query_context", {}))
+        response.setdefault("show_debug_details", False)
         return response

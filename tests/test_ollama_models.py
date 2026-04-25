@@ -1,6 +1,6 @@
 from django.test import SimpleTestCase, override_settings
 
-from apps.processing.services.ollama_models import list_installed_models
+from apps.processing.services.ollama_models import get_available_models, list_installed_models
 
 
 class FakeResponse:
@@ -41,3 +41,30 @@ class OllamaModelsTests(SimpleTestCase):
             models = list_installed_models()
 
         self.assertEqual(models, [])
+
+    @override_settings(OLLAMA_URL="http://localhost:11434/api/generate")
+    def test_returns_normalized_model_snapshot(self):
+        from unittest.mock import patch
+
+        payload = {
+            "models": [
+                {
+                    "name": "llama3.2",
+                    "size": 123,
+                    "modified_at": "2026-04-24T00:00:00Z",
+                }
+            ]
+        }
+
+        with patch(
+            "apps.processing.services.ollama_models.requests.get",
+            return_value=FakeResponse(payload),
+        ):
+            snapshot = get_available_models()
+
+        self.assertEqual(snapshot["provider"], "ollama")
+        self.assertTrue(snapshot["available"])
+        self.assertEqual(snapshot["models"][0]["name"], "llama3.2")
+        self.assertEqual(snapshot["models"][0]["label"], "llama3.2")
+        self.assertEqual(snapshot["models"][0]["size"], 123)
+        self.assertEqual(snapshot["models"][0]["modifiedAt"], "2026-04-24T00:00:00Z")

@@ -665,6 +665,7 @@ class AssistantChatApiTests(TestCase):
         self.assertEqual(payload["tool"], "query_database")
         self.assertEqual(payload["data"], {"rows": []})
         self.assertEqual(payload["query_context"], {"scope": "results"})
+        self.assertFalse(payload["show_debug_details"])
         mocked_agent.answer.assert_called_once_with(
             messages=[{"role": "user", "content": "Dame el resumen"}],
             job_id=12,
@@ -783,3 +784,26 @@ class AssistantChatApiTests(TestCase):
         allowed_headers = response.headers["access-control-allow-headers"]
         self.assertIn("content-type", allowed_headers)
         self.assertIn("x-api-key", allowed_headers)
+
+    def test_ollama_models_endpoint_returns_snapshot(self):
+        with patch(
+            "apps.processing.services.ollama_models.requests.get"
+        ) as mocked_get:
+            mocked_get.return_value.raise_for_status.return_value = None
+            mocked_get.return_value.json.return_value = {
+                "models": [
+                    {
+                        "name": "llama3.2",
+                        "size": 123,
+                        "modified_at": "2026-04-24T00:00:00Z",
+                    }
+                ]
+            }
+
+            response = self.client.get("/api/processing/ollama/models/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"], "ollama")
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["models"][0]["name"], "llama3.2")

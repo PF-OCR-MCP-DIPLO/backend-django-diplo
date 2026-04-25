@@ -10,6 +10,7 @@ from apps.api.views import (
     JobListView,
     JobLogsView,
     JobProcessView,
+    OllamaModelsView,
     ProcessingSettingsOptionsView,
     ProcessingSettingsView,
 )
@@ -38,5 +39,10 @@ urlpatterns = [
         "processing/settings/options/",
         ProcessingSettingsOptionsView.as_view(),
         name="processing-settings-options",
+    ),
+    path(
+        "processing/ollama/models/",
+        OllamaModelsView.as_view(),
+        name="processing-ollama-models",
     ),
 ]

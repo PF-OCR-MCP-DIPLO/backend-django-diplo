@@ -14,6 +14,7 @@ class ProcessingSettingsAssistantTests(TestCase):
             data={
                 "assistant_provider": "ollama",
                 "assistant_model": "gemma3",
+                "assistant_show_debug_details": True,
                 "assistant_temperature": 0.4,
                 "assistant_num_predict": 512,
                 "extraction_criteria": default_extraction_criteria(),
@@ -24,6 +25,7 @@ class ProcessingSettingsAssistantTests(TestCase):
         updated = serializer.save()
         self.assertEqual(updated.assistant_provider, "ollama")
         self.assertEqual(updated.assistant_model, "gemma3")
+        self.assertTrue(updated.assistant_show_debug_details)
         self.assertEqual(updated.assistant_temperature, 0.4)
         self.assertEqual(updated.assistant_num_predict, 512)
         self.assertEqual(updated.extraction_criteria["fields"][0]["key"], "fecha_consignacion")
@@ -51,3 +53,4 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertEqual(runtime.assistant_model, "assistant-test")
         self.assertEqual(runtime.llm_model, "llm-test")
         self.assertIn("fields", runtime.extraction_criteria)
+        self.assertFalse(runtime.assistant_show_debug_details)

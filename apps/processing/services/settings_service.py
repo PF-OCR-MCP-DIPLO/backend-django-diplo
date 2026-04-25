@@ -7,7 +7,7 @@ from apps.processing.services.extraction_criteria import (
     default_extraction_criteria,
     normalize_extraction_criteria,
 )
-from apps.processing.services.ollama_models import list_installed_models
+from apps.processing.services.ollama_models import get_available_models, list_installed_models
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,7 @@ class RuntimeProcessingConfig:
     assistant_api_key: str
     assistant_temperature: float
     assistant_num_predict: int
+    assistant_show_debug_details: bool
     ocr_api_key: str
     llm_api_key: str
     request_timeout_seconds: int
@@ -37,6 +38,7 @@ def get_or_create_processing_settings():
         "llm_model": settings.OLLAMA_MODEL,
         "assistant_provider": ProcessingSettings.Provider.OLLAMA,
         "assistant_model": settings.OLLAMA_MODEL,
+        "assistant_show_debug_details": False,
         "request_timeout_seconds": settings.OLLAMA_TIMEOUT,
         "extraction_criteria": default_extraction_criteria(),
     }
@@ -59,6 +61,7 @@ def get_runtime_config():
         assistant_api_key=config.assistant_api_key,
         assistant_temperature=config.assistant_temperature,
         assistant_num_predict=config.assistant_num_predict,
+        assistant_show_debug_details=config.assistant_show_debug_details,
         ocr_api_key=config.ocr_api_key,
         llm_api_key=config.llm_api_key,
         request_timeout_seconds=config.request_timeout_seconds,
@@ -75,6 +78,7 @@ def as_snapshot_dict(runtime_config):
         "llm_model": runtime_config.llm_model,
         "assistant_provider": runtime_config.assistant_provider,
         "assistant_model": runtime_config.assistant_model,
+        "assistant_show_debug_details": runtime_config.assistant_show_debug_details,
         "has_ocr_api_key": bool(runtime_config.ocr_api_key),
         "has_llm_api_key": bool(runtime_config.llm_api_key),
         "has_assistant_api_key": bool(runtime_config.assistant_api_key),
@@ -123,3 +127,7 @@ def available_options():
             },
         },
     }
+
+
+def get_ollama_models_snapshot():
+    return get_available_models()
