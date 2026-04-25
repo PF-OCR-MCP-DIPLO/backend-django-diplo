@@ -2,6 +2,7 @@ from django.test import TestCase, override_settings
 
 from apps.api.serializers import ProcessingSettingsSerializer
 from apps.processing.models import ProcessingSettings
+from apps.processing.services.extraction_criteria import default_extraction_criteria
 from apps.processing.services.settings_service import get_or_create_processing_settings
 
 
@@ -15,6 +16,7 @@ class ProcessingSettingsAssistantTests(TestCase):
                 "assistant_model": "gemma3",
                 "assistant_temperature": 0.4,
                 "assistant_num_predict": 512,
+                "extraction_criteria": default_extraction_criteria(),
             },
             partial=True,
         )
@@ -24,6 +26,7 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertEqual(updated.assistant_model, "gemma3")
         self.assertEqual(updated.assistant_temperature, 0.4)
         self.assertEqual(updated.assistant_num_predict, 512)
+        self.assertEqual(updated.extraction_criteria["fields"][0]["key"], "fecha_consignacion")
 
     def test_serializer_rejects_missing_ollama_assistant_model(self):
         settings_obj = get_or_create_processing_settings()
@@ -47,3 +50,4 @@ class ProcessingSettingsAssistantTests(TestCase):
         runtime = get_runtime_config()
         self.assertEqual(runtime.assistant_model, "assistant-test")
         self.assertEqual(runtime.llm_model, "llm-test")
+        self.assertIn("fields", runtime.extraction_criteria)

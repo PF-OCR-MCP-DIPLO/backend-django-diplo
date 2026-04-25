@@ -12,11 +12,17 @@ from apps.extraction.schemas import ListaConsignaciones
 
 class OllamaTextLLMProvider(BaseLLMProvider):
     def extract(
-        self, text, archivo_origen, model_name=None, timeout_seconds=None, max_retries=3
+        self,
+        text,
+        archivo_origen,
+        model_name=None,
+        timeout_seconds=None,
+        max_retries=3,
+        extraction_criteria=None,
     ):
         if not text.strip() or "EMPTY OCR RESULT" in text:
             return []
-        system_prompt = self._build_initial_prompt(text)
+        system_prompt = self._build_initial_prompt(text, extraction_criteria)
         current_prompt = system_prompt
         retries = max_retries or settings.LLM_MAX_RETRIES
         timeout_value = timeout_seconds or settings.OLLAMA_TIMEOUT
@@ -74,7 +80,16 @@ class OllamaTextLLMProvider(BaseLLMProvider):
                 time.sleep(settings.LLM_RETRY_DELAY * attempt)
         return []
 
-    def _build_initial_prompt(self, ocr_text):
+    def _build_initial_prompt(self, ocr_text, extraction_criteria=None):
+        criteria_lines = []
+        if isinstance(extraction_criteria, dict):
+            for field in extraction_criteria.get("fields", []):
+                if not isinstance(field, dict) or not field.get("enabled", True):
+                    continue
+                criteria_lines.append(
+                    f"- {field.get('key')}: {field.get('label')} | type={field.get('type')} | required={bool(field.get('required', False))}"
+                )
+        criteria_block = "\n".join(criteria_lines) if criteria_lines else "- usar los campos base de consignacion"
         return f"""
 Actua como un Auxiliar Contable Analista de Datos Experto.
 Analiza el siguiente texto OCR y extrae la informacion de la(s) consignacion(es).
@@ -95,6 +110,8 @@ INSTRUCCIONES CRITICAS ESTRICTAS:
 3. El campo 'valor' y 'referencia' son obligatorios.
 4. El campo 'fecha_consignacion' debe ir en formato DD/MM/YYYY. Si no existe con certeza, usa null.
 5. Si no hay hora con certeza, usa null. Incluye 1 registro por imagen salvo que existan multiples transacciones explicitas.
+6. Criterios actuales de extraccion/validacion:
+{criteria_block}
 
 Texto OCR original a analizar:
 {ocr_text}

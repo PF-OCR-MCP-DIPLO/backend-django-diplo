@@ -37,6 +37,12 @@ def _safe_create_log(process_run, source_image, stage, runtime_config, **kwargs)
         return None
 
 
+def _build_runtime_snapshot(runtime_config):
+    snapshot = as_snapshot_dict(runtime_config)
+    snapshot["extraction_criteria"] = runtime_config.extraction_criteria
+    return snapshot
+
+
 def prepare_job_for_processing(process_run):
     runtime_config = get_runtime_config()
     process_run = ProcessRun.objects.get(pk=process_run.pk)
@@ -48,7 +54,7 @@ def prepare_job_for_processing(process_run):
         process_run.finished_at = None
         process_run.error_message = ""
         process_run.total_records = 0
-        process_run.provider_config_snapshot = as_snapshot_dict(runtime_config)
+        process_run.provider_config_snapshot = _build_runtime_snapshot(runtime_config)
         process_run.save(
             update_fields=[
                 "status",

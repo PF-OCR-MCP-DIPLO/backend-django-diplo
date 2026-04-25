@@ -2,6 +2,8 @@ from django.test import SimpleTestCase
 
 from apps.common.utils.currency import smart_parse_currency
 from apps.extraction.schemas import ConsignacionBasica
+from apps.extraction.services.validators import build_record_observations
+from apps.processing.services.extraction_criteria import default_extraction_criteria
 
 
 class CurrencyTests(SimpleTestCase):
@@ -84,3 +86,37 @@ class ExtractionSchemaTests(SimpleTestCase):
                 referencia="ABC123",
                 valor="50000",
             )
+
+    def test_build_record_observations_uses_extraction_criteria(self):
+        criteria = default_extraction_criteria()
+        criteria["fields"].append(
+            {
+                "key": "referencia",
+                "label": "Referencia exacta",
+                "type": "text",
+                "required": True,
+                "enabled": True,
+                "expectedValue": "REF001",
+                "validationRules": [
+                    {
+                        "kind": "equals",
+                        "value": "REF001",
+                        "message": "La referencia debe ser REF001",
+                    }
+                ],
+                "helpText": "",
+                "order": 5,
+            }
+        )
+        observations, is_current_month = build_record_observations(
+            "15/04/2026",
+            {
+                "fecha_consignacion": "15/04/2026",
+                "hora_consignacion": "09:30",
+                "referencia": "REF999",
+                "valor": 50000.0,
+            },
+            criteria,
+        )
+        self.assertTrue(is_current_month)
+        self.assertIn("La referencia debe ser REF001", observations)

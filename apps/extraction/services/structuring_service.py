@@ -26,6 +26,7 @@ def extract_structured_data(source_image, raw_text, runtime_config):
         model_name=runtime_config.llm_model,
         timeout_seconds=runtime_config.request_timeout_seconds,
         max_retries=settings.LLM_MAX_RETRIES,
+        extraction_criteria=runtime_config.extraction_criteria,
     )
     return {
         "records": records,

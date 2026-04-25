@@ -11,6 +11,7 @@ from apps.processing.models import (
     ProcessRun,
     SourceImage,
 )
+from apps.processing.services.extraction_criteria import normalize_extraction_criteria
 
 
 class UploadDocumentSerializer(serializers.Serializer):
@@ -135,6 +136,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
     assistant_api_key = serializers.CharField(
         required=False, allow_blank=True, write_only=True, max_length=255
     )
+    extraction_criteria = serializers.JSONField(required=False)
 
     class Meta:
         model = ProcessingSettings
@@ -149,6 +151,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "ocr_api_key",
             "llm_api_key",
             "assistant_api_key",
+            "extraction_criteria",
             "has_ocr_api_key",
             "has_llm_api_key",
             "has_assistant_api_key",
@@ -188,6 +191,9 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         llm_model = attrs.get("llm_model", getattr(instance, "llm_model", ""))
         assistant_model = attrs.get(
             "assistant_model", getattr(instance, "assistant_model", "")
+        )
+        extraction_criteria = attrs.get(
+            "extraction_criteria", getattr(instance, "extraction_criteria", {})
         )
         request_timeout_seconds = attrs.get(
             "request_timeout_seconds",
@@ -244,6 +250,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             attrs["ocr_provider"] = "ollama"
         if errors:
             raise serializers.ValidationError(errors)
+        attrs["extraction_criteria"] = normalize_extraction_criteria(extraction_criteria)
         return attrs
 
 

@@ -3,7 +3,13 @@ from apps.extraction.providers.llm.base import BaseLLMProvider
 
 class StubTextLLMProvider(BaseLLMProvider):
     def extract(
-        self, text, archivo_origen, model_name=None, timeout_seconds=None, max_retries=3
+        self,
+        text,
+        archivo_origen,
+        model_name=None,
+        timeout_seconds=None,
+        max_retries=3,
+        extraction_criteria=None,
     ):
         # Deterministic stub: always returns one valid record per image.
         # This enables stable E2E scenarios without requiring Ollama/OpenAI/etc.

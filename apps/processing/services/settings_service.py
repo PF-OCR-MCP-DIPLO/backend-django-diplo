@@ -3,6 +3,10 @@ from dataclasses import dataclass
 from django.conf import settings
 
 from apps.processing.models import ProcessingSettings
+from apps.processing.services.extraction_criteria import (
+    default_extraction_criteria,
+    normalize_extraction_criteria,
+)
 from apps.processing.services.ollama_models import list_installed_models
 
 
@@ -21,6 +25,7 @@ class RuntimeProcessingConfig:
     ocr_api_key: str
     llm_api_key: str
     request_timeout_seconds: int
+    extraction_criteria: dict
 
 
 def get_or_create_processing_settings():
@@ -33,6 +38,7 @@ def get_or_create_processing_settings():
         "assistant_provider": ProcessingSettings.Provider.OLLAMA,
         "assistant_model": settings.OLLAMA_MODEL,
         "request_timeout_seconds": settings.OLLAMA_TIMEOUT,
+        "extraction_criteria": default_extraction_criteria(),
     }
     instance, _ = ProcessingSettings.objects.get_or_create(
         singleton_key="default", defaults=defaults
@@ -56,6 +62,7 @@ def get_runtime_config():
         ocr_api_key=config.ocr_api_key,
         llm_api_key=config.llm_api_key,
         request_timeout_seconds=config.request_timeout_seconds,
+        extraction_criteria=normalize_extraction_criteria(config.extraction_criteria),
     )
 
 
@@ -74,6 +81,7 @@ def as_snapshot_dict(runtime_config):
         "assistant_temperature": runtime_config.assistant_temperature,
         "assistant_num_predict": runtime_config.assistant_num_predict,
         "request_timeout_seconds": runtime_config.request_timeout_seconds,
+        "extraction_criteria": runtime_config.extraction_criteria,
     }
 
 

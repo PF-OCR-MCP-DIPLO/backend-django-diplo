@@ -23,11 +23,13 @@ class StructuringAgent:
 class ValidationPersistenceAgent:
     """Agent responsible for validation and persistence of extracted records."""
 
-    def run(self, process_run, source_image, records):
+    def run(self, process_run, source_image, records, runtime_config):
         created_records = 0
         for structured_record in records:
             observations, is_current_month = build_record_observations(
-                structured_record.get("fecha_consignacion")
+                structured_record.get("fecha_consignacion"),
+                structured_record,
+                runtime_config.extraction_criteria,
             )
 
             # If source_image is a mock object (for text processing), create a real SourceImage
@@ -102,6 +104,7 @@ class ProcessingSupervisorAgent:
             process_run,
             source_image,
             structured_result["records"],
+            runtime_config,
         )
         source_image.ocr_status = SourceImage.OCRStatus.PROCESSED
         source_image.error_message = ""
@@ -163,6 +166,7 @@ class ProcessingSupervisorAgent:
             process_run,
             mock_source_image,
             structured_result["records"],
+            runtime_config,
         )
 
         return records_count

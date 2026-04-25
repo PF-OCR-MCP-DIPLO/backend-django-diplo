@@ -4,9 +4,11 @@ from django.db import transaction
 
 from apps.extraction.services.validators import build_record_observations
 from apps.processing.models import ExtractedDeposit, ExtractionLog, ProcessRun
+from apps.processing.services.settings_service import get_runtime_config
 
 
 def apply_deposit_corrections(process_run: ProcessRun, items: list[dict]) -> ProcessRun:
+    runtime_config = get_runtime_config()
     deposits = {
         deposit.id: deposit
         for deposit in process_run.deposits.select_related("source_image").all()
@@ -25,7 +27,9 @@ def apply_deposit_corrections(process_run: ProcessRun, items: list[dict]) -> Pro
         for item in items:
             deposit = deposits[item["id"]]
             observations, is_current_month = build_record_observations(
-                item["fecha_consignacion"]
+                item["fecha_consignacion"],
+                item,
+                runtime_config.extraction_criteria,
             )
             deposit.fecha_consignacion = item["fecha_consignacion"]
             deposit.hora_consignacion = item["hora_consignacion"]
