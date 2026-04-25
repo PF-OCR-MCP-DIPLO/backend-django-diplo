@@ -13,6 +13,7 @@ django.setup()
 from apps.api.services.shared_tools import upload_document_from_path
 from apps.api.services.tool_dispatcher import execute_tool
 from mcp_server.schemas import (
+    DepositCorrectionInput,
     JobIdInput,
     UpdateProcessingSettingsInput,
     UploadDocumentInput,
@@ -106,6 +107,31 @@ def export_job_excel(job_id: int) -> str:
     args = JobIdInput(job_id=job_id)
     return _run_local_tool(
         "export_job_excel", {"job_id": args.job_id}, job_id=args.job_id
+    )
+
+
+@mcp.tool()
+def update_deposit_correction(
+    job_id: int,
+    deposit_id: int,
+    referencia: str,
+    valor: float,
+    fecha_consignacion: str | None = None,
+    hora_consignacion: str | None = None,
+) -> str:
+    """Correct a single extracted deposit row with confirmation required by backend."""
+    args = DepositCorrectionInput(
+        job_id=job_id,
+        deposit_id=deposit_id,
+        referencia=referencia,
+        valor=valor,
+        fecha_consignacion=fecha_consignacion,
+        hora_consignacion=hora_consignacion,
+    )
+    return _run_local_tool(
+        "update_deposit_correction",
+        args.model_dump(exclude_none=True),
+        job_id=args.job_id,
     )
 
 

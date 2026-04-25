@@ -51,6 +51,20 @@ class McpParityTests(TestCase):
             self._multiagent_payload("get_processing_settings_options"),
         )
 
+    def test_deposit_correction_tool_matches_multiagent(self):
+        payload = {
+            "job_id": 10,
+            "deposit_id": 11,
+            "fecha_consignacion": "2026-04-23",
+            "hora_consignacion": "10:00",
+            "referencia": "REFMCP001",
+            "valor": 1000,
+        }
+        self.assertEqual(
+            self._mcp_payload(mcp_server.update_deposit_correction(**payload)),
+            self._multiagent_payload("update_deposit_correction", payload, job_id=10),
+        )
+
     def test_upload_and_status_match_multiagent(self):
         tmp_path = ""
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:

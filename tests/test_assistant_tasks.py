@@ -8,7 +8,12 @@ from apps.api.services.assistant_tasks import (
     build_assistant_task_context,
     resolve_assistant_task,
 )
-from apps.processing.models import ExtractedDeposit, ExtractionLog, ProcessRun, SourceImage
+from apps.processing.models import (
+    ExtractedDeposit,
+    ExtractionLog,
+    ProcessRun,
+    SourceImage,
+)
 
 
 class AssistantTaskTests(TestCase):

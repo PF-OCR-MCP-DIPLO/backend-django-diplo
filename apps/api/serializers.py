@@ -336,3 +336,7 @@ class BulkDepositCorrectionItemSerializer(serializers.Serializer):
 
 class BulkDepositCorrectionSerializer(serializers.Serializer):
     items = BulkDepositCorrectionItemSerializer(many=True, allow_empty=False)
+
+
+class DepositCorrectionSerializer(BulkDepositCorrectionItemSerializer):
+    job_id = serializers.IntegerField(min_value=1)

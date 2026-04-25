@@ -71,9 +71,48 @@ class AssistantToolExecutionTests(TestCase):
             "job_id is required",
         )
 
+    def test_update_deposit_correction_requires_job_and_deposit(self):
+        missing = self._execute(
+            "update_deposit_correction",
+            {
+                "job_id": self.process_run.id,
+                "referencia": "REFNEW",
+                "valor": 123,
+            },
+        )
+        self.assertIn("invalid", missing.get("detail", "").lower())
+
+        wrong_job = self._execute(
+            "update_deposit_correction",
+            {
+                "job_id": self.process_run.id + 100,
+                "deposit_id": self.deposit.id,
+                "fecha_consignacion": "2026-04-22",
+                "hora_consignacion": "09:00",
+                "referencia": "REFNEW",
+                "valor": 123,
+            },
+        )
+        self.assertIn("job_id invalido", wrong_job["detail"])
+
+        wrong_deposit = self._execute(
+            "update_deposit_correction",
+            {
+                "job_id": self.process_run.id,
+                "deposit_id": self.deposit.id + 100,
+                "fecha_consignacion": "2026-04-22",
+                "hora_consignacion": "09:00",
+                "referencia": "REFNEW",
+                "valor": 123,
+            },
+        )
+        self.assertIn("deposit_id no pertenece", wrong_deposit["detail"])
+
     def test_tool_risk_levels_are_classified(self):
         self.assertEqual(get_tool_risk_level("query_database"), "read_only")
-        self.assertEqual(get_tool_risk_level("update_processing_settings"), "requires_confirmation")
+        self.assertEqual(
+            get_tool_risk_level("update_processing_settings"), "requires_confirmation"
+        )
         self.assertTrue(tool_requires_confirmation("update_processing_settings"))
         self.assertEqual(get_tool_risk_level("query_database_sql"), "restricted")
 
@@ -96,6 +135,25 @@ class AssistantToolExecutionTests(TestCase):
         self.assertEqual(summary["jobs_count"], 1)
         self.assertEqual(summary["total_records"], 1)
         self.assertEqual(summary["total_value"], "100000")
+
+    def test_update_deposit_correction_updates_single_row(self):
+        payload = self._execute(
+            "update_deposit_correction",
+            {
+                "job_id": self.process_run.id,
+                "deposit_id": self.deposit.id,
+                "fecha_consignacion": "2026-04-23",
+                "hora_consignacion": "10:00",
+                "referencia": "REFFIX001",
+                "valor": 250000,
+            },
+        )
+
+        self.assertEqual(payload["operation"], "update")
+        self.assertEqual(payload["job_id"], self.process_run.id)
+        self.assertEqual(payload["deposit_id"], self.deposit.id)
+        self.deposit.refresh_from_db()
+        self.assertEqual(self.deposit.referencia, "REFFIX001")
 
     def test_query_database_validates_source_and_applies_filters(self):
         invalid = self._execute("query_database", {"query": {"source": "nope"}})

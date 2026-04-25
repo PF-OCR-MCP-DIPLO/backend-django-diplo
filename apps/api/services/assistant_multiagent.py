@@ -20,6 +20,24 @@ from apps.api.services.assistant_tasks import (
     build_assistant_task_context,
     resolve_assistant_task,
 )
+from apps.api.services.pending_actions import (
+    build_pending_action,
+    clear_pending_action,
+    normalize_pending_action,
+    validate_pending_action,
+)
+from apps.api.services.deposit_correction_tools import (
+    deposit_correction_confirmation_message,
+    deposit_correction_has_updates,
+    deposit_correction_needs_clarification,
+    deposit_correction_payload_for_correction,
+    deposit_correction_success_description,
+    deposit_correction_summary,
+    deposit_correction_values_from_arguments,
+    execute_deposit_correction,
+    extract_deposit_correction_deposit_id,
+    normalize_deposit_correction_arguments,
+)
 from apps.api.serializers import (
     ExtractionLogSerializer,
     ProcessingSettingsSerializer,
@@ -54,6 +72,7 @@ _ALLOWED_TOOLS = {
     "get_completed_records_summary",
     "query_database",
     "crud_database",
+    "update_deposit_correction",
     "get_processing_settings",
     "get_processing_settings_options",
     "update_processing_settings",
@@ -88,7 +107,6 @@ _CONFIRMATION_WORDS = {
 
 _CANCEL_WORDS = {"cancelar", "cancela", "no", "anular", "detener"}
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -112,7 +130,9 @@ def _allow_unsafe_sql_enabled() -> bool:
     return bool(getattr(settings, "ALLOW_UNSAFE_SQL", False))
 
 
-def _confirmation_payload(tool: str, detail: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+def _confirmation_payload(
+    tool: str, detail: str, arguments: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return {
         "detail": detail,
         "tool": tool,
@@ -120,18 +140,6 @@ def _confirmation_payload(tool: str, detail: str, arguments: dict[str, Any] | No
         "risk_level": get_tool_risk_level(tool),
         "arguments": arguments or {},
     }
-
-
-def _pending_action_payload(plan: AssistantPlan, job_id: int | None) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "tool": plan.tool,
-        "arguments": plan.arguments,
-        "intent_name": plan.intent_name,
-        "intent_summary": plan.intent_summary,
-    }
-    if job_id is not None:
-        payload["job_id"] = job_id
-    return payload
 
 
 @dataclass(frozen=True)
@@ -493,6 +501,17 @@ class IntentAgent:
                 },
                 summary="Solicitud de actualizacion de registro",
             )
+
+        if _contains_any(text, ("corrige", "corregir", "corrección", "correccion")):
+            deposit_id = extract_deposit_correction_deposit_id(text)
+            if deposit_id is not None:
+                return AssistantIntent(
+                    name="deposit_correction",
+                    confidence=0.92,
+                    tool_hint="update_deposit_correction",
+                    arguments={"deposit_id": deposit_id},
+                    summary=deposit_correction_summary({"deposit_id": deposit_id}),
+                )
 
         if _contains_any(text, ("elimina", "eliminar", "borra", "borrar")):
             filters: list[dict[str, Any]] = []
@@ -1303,6 +1322,7 @@ class PlanningAgent:
                     "get_last_record_value",
                     "get_completed_records_summary",
                     "query_database",
+                    "update_deposit_correction",
                     "process_job",
                     "export_job_excel",
                 }
@@ -1357,6 +1377,7 @@ Herramientas disponibles:
 - get_completed_records_summary
 - query_database
 - crud_database
+- update_deposit_correction
 - get_processing_settings
 - get_processing_settings_options
 - update_processing_settings
@@ -1365,7 +1386,7 @@ Herramientas disponibles:
 
 Responde SOLO con JSON valido y nada mas usando este esquema:
 {{
-    "tool": "none|health_check|describe_database_schema|query_database_sql|list_jobs|get_job_status|get_job_logs|get_last_record_value|get_completed_records_summary|query_database|crud_database|get_processing_settings|get_processing_settings_options|update_processing_settings|process_job|export_job_excel",
+    "tool": "none|health_check|describe_database_schema|query_database_sql|list_jobs|get_job_status|get_job_logs|get_last_record_value|get_completed_records_summary|query_database|crud_database|update_deposit_correction|get_processing_settings|get_processing_settings_options|update_processing_settings|process_job|export_job_excel",
   "arguments": {{ ... }}
 }}
 
@@ -1379,6 +1400,7 @@ Reglas:
 - Si la intencion es sql_query, usa query_database_sql con arguments.sql.
 - Si la intencion es db_query, usa query_database con un objeto `query` en arguments.
 - Si la intencion es crud_create|crud_update|crud_delete, usa crud_database.
+- Si la intencion es deposit_correction, usa update_deposit_correction.
 - Si la intencion es job_status, usa get_job_status.
 - Si la intencion es job_logs, usa get_job_logs.
 - {sql_mode_rules}
@@ -1429,6 +1451,7 @@ Conversacion:
                 "get_last_record_value",
                 "query_database",
                 "crud_database",
+                "update_deposit_correction",
                 "process_job",
                 "export_job_excel",
             }
@@ -1623,6 +1646,9 @@ class ToolExecutionAgent:
         if plan.tool == "crud_database":
             return self._execute_crud_database(plan.arguments)
 
+        if plan.tool == "update_deposit_correction":
+            return self._execute_update_deposit_correction(plan.arguments)
+
         if plan.tool == "list_jobs":
             jobs = ProcessRun.objects.order_by("-created_at")[:5]
             return ProcessRunListSerializer(
@@ -1774,7 +1800,9 @@ class ToolExecutionAgent:
                 "capabilities": _CAPABILITIES,
                 "tools": [
                     {"tool": tool, "risk_level": get_tool_risk_level(tool)}
-                    for tool in sorted(tool for tool in _ALLOWED_TOOLS if tool != "none")
+                    for tool in sorted(
+                        tool for tool in _ALLOWED_TOOLS if tool != "none"
+                    )
                 ],
             }
 
@@ -2420,12 +2448,14 @@ class ResponseAgent:
                 total_records = tool_payload.get("total_records", 0)
                 total_images = tool_payload.get("total_images", 0)
                 status = tool_payload.get("status", "unknown")
-                return (
-                    f"El job #{job_id} va en estado {status}, con {total_images} imagen(es) y {total_records} registro(s) extraidos."
-                )
+                return f"El job #{job_id} va en estado {status}, con {total_images} imagen(es) y {total_records} registro(s) extraidos."
 
             if task.name == "explain_job_findings" and isinstance(tool_payload, dict):
-                findings = task_context.get("findings", {}) if isinstance(task_context, dict) else {}
+                findings = (
+                    task_context.get("findings", {})
+                    if isinstance(task_context, dict)
+                    else {}
+                )
                 if isinstance(findings, dict):
                     count = findings.get("rows_with_observations", 0)
                     return (
@@ -2447,19 +2477,23 @@ class ResponseAgent:
                     observations = selected_row.get("observations") or []
                     suggestion = "Revisa la fila seleccionada y confirma los datos faltantes o inconsistentes."
                     if observations:
-                        suggestion = (
-                            f"Revisa la fila seleccionada. Observaciones detectadas: {', '.join(str(item) for item in observations[:3])}."
-                        )
+                        suggestion = f"Revisa la fila seleccionada. Observaciones detectadas: {', '.join(str(item) for item in observations[:3])}."
                     return suggestion
 
-            if task.name == "summarize_extraction_logs" and isinstance(tool_payload, list):
+            if task.name == "summarize_extraction_logs" and isinstance(
+                tool_payload, list
+            ):
                 if tool_payload:
-                    errors_count = sum(1 for item in tool_payload if isinstance(item, dict) and item.get("is_error"))
-                    return (
-                        f"Encontré {len(tool_payload)} log(s) para el job #{job_id}; {errors_count} indican error."
+                    errors_count = sum(
+                        1
+                        for item in tool_payload
+                        if isinstance(item, dict) and item.get("is_error")
                     )
+                    return f"Encontré {len(tool_payload)} log(s) para el job #{job_id}; {errors_count} indican error."
 
-            if task.name == "explain_extraction_criteria" and isinstance(task_context, dict):
+            if task.name == "explain_extraction_criteria" and isinstance(
+                task_context, dict
+            ):
                 criteria = task_context.get("criteria", {})
                 if isinstance(criteria, dict):
                     enabled = criteria.get("enabled_fields") or []
@@ -2596,6 +2630,12 @@ class ResponseAgent:
             referencia = last_record.get("referencia") or "N/D"
             job_ref = tool_payload.get("job_id")
             return f"El ultimo registro del job #{job_ref} tiene valor {valor} y referencia {referencia}."
+
+        if plan.tool == "update_deposit_correction" and isinstance(tool_payload, dict):
+            detail = tool_payload.get("detail")
+            if detail:
+                return str(detail)
+            return f"Corrigí la fila #{tool_payload.get('deposit_id')} del job #{tool_payload.get('job_id')}."
 
         if plan.tool == "none":
             return self._general_chat_response(
@@ -2773,8 +2813,23 @@ class AssistantAgent:
             last_user_message = self._last_user_message(messages)
 
             if pending_action is not None:
+                pending_action, pending_error = normalize_pending_action(pending_action)
+                if pending_error is not None:
+                    return self._clarification_response(
+                        pending_error,
+                        normalized_query_context,
+                    )
                 pending_plan = self._plan_from_pending_action(pending_action)
                 if self._is_confirmation_message(last_user_message):
+                    revalidation_error = validate_pending_action(
+                        pending_action,
+                        job_id=job_id or pending_action.get("job_id"),
+                    )
+                    if revalidation_error is not None:
+                        return self._clarification_response(
+                            revalidation_error,
+                            normalized_query_context,
+                        )
                     tool_payload = self.tool_agent.execute(
                         pending_plan, job_id=job_id or pending_action.get("job_id")
                     )
@@ -2799,7 +2854,7 @@ class AssistantAgent:
                         "data": tool_payload,
                         "task": "confirmation_executed",
                         "task_context": {},
-                        "query_context": self._clear_pending_action(normalized_query_context),
+                        "query_context": clear_pending_action(normalized_query_context),
                     }
                 if self._is_cancel_message(last_user_message):
                     reply = "De acuerdo, cancelé la acción pendiente."
@@ -2813,7 +2868,7 @@ class AssistantAgent:
                         },
                         "task": "confirmation_cancelled",
                         "task_context": {},
-                        "query_context": self._clear_pending_action(normalized_query_context),
+                        "query_context": clear_pending_action(normalized_query_context),
                     }
 
             intent = self.intent_agent.infer(
@@ -2843,18 +2898,46 @@ class AssistantAgent:
                 job_id=job_id,
                 query_context=normalized_query_context,
             )
+            clarification = deposit_correction_needs_clarification(
+                plan.arguments if isinstance(plan.arguments, dict) else {},
+                job_id,
+            )
+            if clarification is not None:
+                return self._clarification_response(
+                    clarification,
+                    normalized_query_context,
+                    task=task,
+                    task_context=task_context,
+                )
             if tool_requires_confirmation(plan.tool):
                 pending_context = dict(normalized_query_context)
-                pending_context["pending_action"] = _pending_action_payload(plan, job_id)
+                correction_arguments = (
+                    deposit_correction_payload_for_correction(plan.arguments)
+                    if isinstance(plan.arguments, dict)
+                    else {}
+                )
+                pending_context["pending_action"] = build_pending_action(
+                    tool=plan.tool,
+                    arguments=correction_arguments,
+                    intent_name=plan.intent_name,
+                    intent_summary=deposit_correction_summary(correction_arguments),
+                    job_id=job_id,
+                )
                 return {
-                    "reply": self._confirmation_message(plan.tool, plan.arguments),
-                    "message": self._confirmation_message(plan.tool, plan.arguments),
+                    "reply": deposit_correction_confirmation_message(
+                        correction_arguments
+                    ),
+                    "message": deposit_correction_confirmation_message(
+                        correction_arguments
+                    ),
                     "tool": plan.tool,
                     "data": {
-                        "detail": self._confirmation_message(plan.tool, plan.arguments),
+                        "detail": deposit_correction_confirmation_message(
+                            correction_arguments
+                        ),
                         "requires_confirmation": True,
                         "risk_level": get_tool_risk_level(plan.tool),
-                        "arguments": plan.arguments,
+                        "arguments": correction_arguments,
                     },
                     "task": task.name,
                     "task_context": task_context,
@@ -2878,7 +2961,7 @@ class AssistantAgent:
                 "data": tool_payload,
                 "task": task.name,
                 "task_context": task_context,
-                "query_context": self._clear_pending_action(normalized_query_context),
+                "query_context": clear_pending_action(normalized_query_context),
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             logger.warning(
@@ -2900,7 +2983,7 @@ class AssistantAgent:
                     "detail": "assistant_unavailable",
                     "error": str(exc),
                 },
-                "query_context": self._clear_pending_action(normalized_query_context),
+                "query_context": clear_pending_action(normalized_query_context),
             }
 
     def _last_user_message(self, messages: list[dict[str, str]]) -> str:
@@ -2917,19 +3000,48 @@ class AssistantAgent:
         normalized = text.strip().lower()
         return normalized in _CANCEL_WORDS or normalized.startswith("cancel")
 
-    def _extract_pending_action(self, query_context: dict[str, Any]) -> dict[str, Any] | None:
+    def _extract_pending_action(
+        self, query_context: dict[str, Any]
+    ) -> dict[str, Any] | None:
         pending_action = query_context.get("pending_action")
-        if isinstance(pending_action, dict) and isinstance(pending_action.get("tool"), str):
-            return pending_action
+        if isinstance(pending_action, dict):
+            normalized, error = normalize_pending_action(pending_action)
+            if error is None:
+                return normalized
         return None
 
-    def _plan_from_pending_action(self, pending_action: dict[str, Any]) -> AssistantPlan:
+    def _clarification_response(
+        self,
+        message: str,
+        query_context: dict[str, Any],
+        task: AssistantTask | None = None,
+        task_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        reply = message
+        payload = {
+            "reply": reply,
+            "message": reply,
+            "tool": "none",
+            "data": {"detail": message, "requires_clarification": True},
+            "task": task.name if task is not None else "clarification",
+            "task_context": task_context or {},
+            "query_context": clear_pending_action(query_context),
+        }
+        return payload
+
+    def _plan_from_pending_action(
+        self, pending_action: dict[str, Any]
+    ) -> AssistantPlan:
         tool = str(pending_action.get("tool") or "none")
         arguments = pending_action.get("arguments")
         if not isinstance(arguments, dict):
             arguments = {}
+        if tool == "update_deposit_correction":
+            arguments = normalize_deposit_correction_arguments(arguments)
         intent_name = str(pending_action.get("intent_name") or "confirmation")
-        intent_summary = str(pending_action.get("intent_summary") or "Pending confirmation")
+        intent_summary = str(
+            pending_action.get("intent_summary") or "Pending confirmation"
+        )
         return AssistantPlan(
             tool=tool,
             arguments=arguments,
@@ -2937,20 +3049,5 @@ class AssistantAgent:
             intent_summary=intent_summary,
         )
 
-    def _clear_pending_action(self, query_context: dict[str, Any]) -> dict[str, Any]:
-        cleaned = dict(query_context)
-        cleaned.pop("pending_action", None)
-        return cleaned
-
-    def _confirmation_message(self, tool: str, arguments: dict[str, Any]) -> str:
-        messages = {
-            "crud_database": "Necesito tu confirmacion para ejecutar cambios en la base de datos.",
-            "update_processing_settings": "Necesito tu confirmacion para actualizar la configuracion.",
-            "process_job": "Necesito tu confirmacion para iniciar el procesamiento de este job.",
-            "export_job_excel": "Necesito tu confirmacion para exportar este job a Excel.",
-            "upload_document": "Necesito tu confirmacion para subir este documento.",
-        }
-        detail = messages.get(tool, "Necesito tu confirmacion para ejecutar esta accion.")
-        if tool == "process_job" and "job_id" in arguments:
-            return f"{detail} Job #{arguments.get('job_id')}."
-        return detail
+    def _execute_update_deposit_correction(self, arguments: Any) -> dict[str, Any]:
+        return execute_deposit_correction(arguments)

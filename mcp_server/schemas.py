@@ -28,3 +28,12 @@ class UpdateProcessingSettingsInput(BaseModel):
 
     def to_partial_dict(self) -> dict:
         return self.model_dump(exclude_none=True)
+
+
+class DepositCorrectionInput(BaseModel):
+    job_id: int = Field(ge=1, description="Identifier of the processing job")
+    deposit_id: int = Field(ge=1, description="Identifier of the extracted deposit")
+    fecha_consignacion: str | None = None
+    hora_consignacion: str | None = None
+    referencia: str
+    valor: float

@@ -1,7 +1,11 @@
 from django.test import TestCase
 
 from apps.api.services.assistant_chat import AssistantChatService
-from apps.api.services.assistant_multiagent import AssistantAgent, AssistantIntent, AssistantPlan
+from apps.api.services.assistant_multiagent import (
+    AssistantAgent,
+    AssistantIntent,
+    AssistantPlan,
+)
 
 
 class FakeAgent:
@@ -131,5 +135,91 @@ class AssistantChatServiceTests(TestCase):
         )
 
         self.assertEqual(response["tool"], "none")
-        self.assertEqual(response["message"], "De acuerdo, cancelé la acción pendiente.")
+        self.assertEqual(
+            response["message"], "De acuerdo, cancelé la acción pendiente."
+        )
+        self.assertNotIn("pending_action", response["query_context"])
+
+    def test_assistant_agent_requests_confirmation_for_deposit_correction(self):
+        agent = AssistantAgent()
+        agent.intent_agent.infer = lambda *args, **kwargs: AssistantIntent(
+            name="deposit_correction",
+            confidence=0.99,
+            tool_hint="update_deposit_correction",
+            summary="corregir fila",
+        )
+        agent.planner_agent.plan = lambda *args, **kwargs: AssistantPlan(
+            tool="update_deposit_correction",
+            arguments={
+                "job_id": 12,
+                "deposit_id": 44,
+                "referencia": "R1",
+                "valor": 100,
+            },
+            intent_name="deposit_correction",
+            intent_summary="corregir fila",
+        )
+        agent.tool_agent.execute = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("tool executor should not run before confirmation")
+        )
+
+        response = agent.answer(
+            messages=[{"role": "user", "content": "corrige la fila 44"}],
+            job_id=12,
+            errors=0,
+        )
+
+        self.assertEqual(response["tool"], "update_deposit_correction")
+        self.assertTrue(response["data"]["requires_confirmation"])
+        self.assertIn("fila", response["message"].lower())
+
+    def test_assistant_agent_asks_for_clarification_when_correction_is_incomplete(self):
+        agent = AssistantAgent()
+        agent.intent_agent.infer = lambda *args, **kwargs: AssistantIntent(
+            name="deposit_correction",
+            confidence=0.99,
+            tool_hint="update_deposit_correction",
+            summary="corregir fila",
+            arguments={"job_id": 12},
+        )
+        agent.planner_agent.plan = lambda *args, **kwargs: AssistantPlan(
+            tool="update_deposit_correction",
+            arguments={"job_id": 12},
+            intent_name="deposit_correction",
+            intent_summary="corregir fila",
+        )
+        agent.tool_agent.execute = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("tool executor should not run when data is incomplete")
+        )
+
+        response = agent.answer(
+            messages=[{"role": "user", "content": "corrige esta fila"}],
+            job_id=12,
+            errors=0,
+        )
+
+        self.assertEqual(response["tool"], "none")
+        self.assertTrue(response["data"]["requires_clarification"])
+        self.assertIn("necesito", response["message"].lower())
+
+    def test_assistant_agent_revalidates_pending_action_before_execution(self):
+        agent = AssistantAgent()
+
+        response = agent.answer(
+            messages=[{"role": "user", "content": "confirmar"}],
+            job_id=12,
+            query_context={
+                "pending_action": {
+                    "id": "stale-action",
+                    "tool": "update_deposit_correction",
+                    "label": "Corregir consignación",
+                    "summary": "corregir fila",
+                    "risk": "requires_confirmation",
+                    "arguments": {"job_id": 12},
+                }
+            },
+        )
+
+        self.assertEqual(response["tool"], "none")
+        self.assertTrue(response["data"]["requires_clarification"])
         self.assertNotIn("pending_action", response["query_context"])

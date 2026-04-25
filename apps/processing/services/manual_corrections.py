@@ -7,6 +7,10 @@ from apps.processing.models import ExtractedDeposit, ExtractionLog, ProcessRun
 from apps.processing.services.settings_service import get_runtime_config
 
 
+def apply_deposit_correction(process_run: ProcessRun, item: dict) -> ProcessRun:
+    return apply_deposit_corrections(process_run, [item])
+
+
 def apply_deposit_corrections(process_run: ProcessRun, items: list[dict]) -> ProcessRun:
     runtime_config = get_runtime_config()
     deposits = {

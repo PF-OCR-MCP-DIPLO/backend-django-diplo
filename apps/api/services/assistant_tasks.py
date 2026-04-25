@@ -48,17 +48,40 @@ def resolve_assistant_task(
         return AssistantTask("summarize_extraction_logs", "Resumir logs del job")
 
     if tool == "get_processing_settings" or any(
-        term in text for term in ("criterios", "validación", "validacion", "settings", "configuracion", "configuración")
+        term in text
+        for term in (
+            "criterios",
+            "validación",
+            "validacion",
+            "settings",
+            "configuracion",
+            "configuración",
+        )
     ):
-        return AssistantTask("explain_extraction_criteria", "Explicar criterios y settings")
+        return AssistantTask(
+            "explain_extraction_criteria", "Explicar criterios y settings"
+        )
 
     if tool == "get_job_status" or any(
-        term in text for term in ("resumen", "estado del job", "estado de este job", "cómo va", "como va", "job actual")
+        term in text
+        for term in (
+            "resumen",
+            "estado del job",
+            "estado de este job",
+            "cómo va",
+            "como va",
+            "job actual",
+        )
     ):
         return AssistantTask("explain_job_summary", "Explicar resumen del job")
 
-    if has_row_context or any(term in text for term in ("fila", "row", "registro", "celda")):
-        if any(term in text for term in ("corrige", "corregir", "corrección", "correccion", "suger")):
+    if has_row_context or any(
+        term in text for term in ("fila", "row", "registro", "celda")
+    ):
+        if any(
+            term in text
+            for term in ("corrige", "corregir", "corrección", "correccion", "suger")
+        ):
             return AssistantTask("suggest_row_correction", "Sugerir corrección de fila")
         return AssistantTask("explain_row_issue", "Explicar problema de una fila")
 
@@ -72,7 +95,10 @@ def resolve_assistant_task(
             requires_confirmation=True,
         )
 
-    if any(term in text for term in ("reprocesar", "procesar de nuevo", "volver a procesar", "procesar")):
+    if any(
+        term in text
+        for term in ("reprocesar", "procesar de nuevo", "volver a procesar", "procesar")
+    ):
         return AssistantTask(
             "prepare_reprocess",
             "Preparar reprocesamiento",
@@ -83,7 +109,9 @@ def resolve_assistant_task(
 
 
 def _summarize_deposit(deposit: Any) -> dict[str, Any]:
-    observations = list(deposit.observations or []) if hasattr(deposit, "observations") else []
+    observations = (
+        list(deposit.observations or []) if hasattr(deposit, "observations") else []
+    )
     return {
         "id": getattr(deposit, "id", None),
         "sequence_index": getattr(deposit, "sequence_index", None),
@@ -121,7 +149,9 @@ def build_assistant_task_context(
 
     settings_obj = get_or_create_processing_settings()
     deposits = list(job.deposits.order_by("sequence_index", "id"))
-    issue_rows = [deposit for deposit in deposits if getattr(deposit, "observations", None)]
+    issue_rows = [
+        deposit for deposit in deposits if getattr(deposit, "observations", None)
+    ]
     selected_ids = {
         context.get("resultId"),
         context.get("rowId"),
@@ -131,13 +161,16 @@ def build_assistant_task_context(
         (
             int(value)
             for value in selected_ids
-            if isinstance(value, int) or (isinstance(value, str) and str(value).isdigit())
+            if isinstance(value, int)
+            or (isinstance(value, str) and str(value).isdigit())
         ),
         None,
     )
     selected_row = None
     if selected_id is not None:
-        selected_row = next((deposit for deposit in deposits if deposit.id == selected_id), None)
+        selected_row = next(
+            (deposit for deposit in deposits if deposit.id == selected_id), None
+        )
 
     task_context.update(
         {
@@ -156,7 +189,9 @@ def build_assistant_task_context(
             "criteria": {
                 "enabled_fields": [
                     field.get("key")
-                    for field in normalize_extraction_criteria(settings_obj.extraction_criteria).get("fields", [])
+                    for field in normalize_extraction_criteria(
+                        settings_obj.extraction_criteria
+                    ).get("fields", [])
                     if field.get("enabled")
                 ],
             },
@@ -180,4 +215,3 @@ def build_assistant_task_context(
         ]
 
     return task_context
-

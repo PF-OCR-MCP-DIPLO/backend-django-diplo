@@ -11,6 +11,7 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "get_completed_records_summary": "read_only",
     "query_database": "read_only",
     "crud_database": "requires_confirmation",
+    "update_deposit_correction": "requires_confirmation",
     "get_processing_settings": "read_only",
     "get_processing_settings_options": "read_only",
     "update_processing_settings": "requires_confirmation",
