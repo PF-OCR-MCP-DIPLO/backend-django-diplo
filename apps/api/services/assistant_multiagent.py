@@ -73,6 +73,21 @@ _CAPABILITIES = [
     "Procesar jobs y exportar Excel.",
 ]
 
+_CONFIRMATION_WORDS = {
+    "confirmo",
+    "confirmar",
+    "confirma",
+    "si",
+    "sí",
+    "ok",
+    "dale",
+    "ejecuta",
+    "ejecutar",
+    "adelante",
+}
+
+_CANCEL_WORDS = {"cancelar", "cancela", "no", "anular", "detener"}
+
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +120,18 @@ def _confirmation_payload(tool: str, detail: str, arguments: dict[str, Any] | No
         "risk_level": get_tool_risk_level(tool),
         "arguments": arguments or {},
     }
+
+
+def _pending_action_payload(plan: AssistantPlan, job_id: int | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "tool": plan.tool,
+        "arguments": plan.arguments,
+        "intent_name": plan.intent_name,
+        "intent_summary": plan.intent_summary,
+    }
+    if job_id is not None:
+        payload["job_id"] = job_id
+    return payload
 
 
 @dataclass(frozen=True)
@@ -2742,6 +2769,53 @@ class AssistantAgent:
         self._sync_runtime_model()
         try:
             normalized_query_context = query_context or {}
+            pending_action = self._extract_pending_action(normalized_query_context)
+            last_user_message = self._last_user_message(messages)
+
+            if pending_action is not None:
+                pending_plan = self._plan_from_pending_action(pending_action)
+                if self._is_confirmation_message(last_user_message):
+                    tool_payload = self.tool_agent.execute(
+                        pending_plan, job_id=job_id or pending_action.get("job_id")
+                    )
+                    reply = self.response_agent.compose(
+                        messages,
+                        AssistantIntent(
+                            name="confirmation",
+                            confidence=1.0,
+                            summary="Accion confirmada por el usuario",
+                        ),
+                        pending_plan,
+                        tool_payload,
+                        job_id=job_id or pending_action.get("job_id"),
+                        errors=errors,
+                        task=None,
+                        task_context=None,
+                    )
+                    return {
+                        "reply": reply,
+                        "message": reply,
+                        "tool": pending_plan.tool,
+                        "data": tool_payload,
+                        "task": "confirmation_executed",
+                        "task_context": {},
+                        "query_context": self._clear_pending_action(normalized_query_context),
+                    }
+                if self._is_cancel_message(last_user_message):
+                    reply = "De acuerdo, cancelé la acción pendiente."
+                    return {
+                        "reply": reply,
+                        "message": reply,
+                        "tool": "none",
+                        "data": {
+                            "detail": "pending_action_cancelled",
+                            "pending_action": pending_action,
+                        },
+                        "task": "confirmation_cancelled",
+                        "task_context": {},
+                        "query_context": self._clear_pending_action(normalized_query_context),
+                    }
+
             intent = self.intent_agent.infer(
                 messages,
                 job_id=job_id,
@@ -2770,6 +2844,8 @@ class AssistantAgent:
                 query_context=normalized_query_context,
             )
             if tool_requires_confirmation(plan.tool):
+                pending_context = dict(normalized_query_context)
+                pending_context["pending_action"] = _pending_action_payload(plan, job_id)
                 return {
                     "reply": self._confirmation_message(plan.tool, plan.arguments),
                     "message": self._confirmation_message(plan.tool, plan.arguments),
@@ -2782,6 +2858,7 @@ class AssistantAgent:
                     },
                     "task": task.name,
                     "task_context": task_context,
+                    "query_context": pending_context,
                 }
             tool_payload = self.tool_agent.execute(plan, job_id=job_id)
             reply = self.response_agent.compose(
@@ -2801,6 +2878,7 @@ class AssistantAgent:
                 "data": tool_payload,
                 "task": task.name,
                 "task_context": task_context,
+                "query_context": self._clear_pending_action(normalized_query_context),
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             logger.warning(
@@ -2822,7 +2900,47 @@ class AssistantAgent:
                     "detail": "assistant_unavailable",
                     "error": str(exc),
                 },
+                "query_context": self._clear_pending_action(normalized_query_context),
             }
+
+    def _last_user_message(self, messages: list[dict[str, str]]) -> str:
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                return (message.get("content") or "").strip().lower()
+        return ""
+
+    def _is_confirmation_message(self, text: str) -> bool:
+        normalized = text.strip().lower()
+        return normalized in _CONFIRMATION_WORDS or normalized.startswith("confirm")
+
+    def _is_cancel_message(self, text: str) -> bool:
+        normalized = text.strip().lower()
+        return normalized in _CANCEL_WORDS or normalized.startswith("cancel")
+
+    def _extract_pending_action(self, query_context: dict[str, Any]) -> dict[str, Any] | None:
+        pending_action = query_context.get("pending_action")
+        if isinstance(pending_action, dict) and isinstance(pending_action.get("tool"), str):
+            return pending_action
+        return None
+
+    def _plan_from_pending_action(self, pending_action: dict[str, Any]) -> AssistantPlan:
+        tool = str(pending_action.get("tool") or "none")
+        arguments = pending_action.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = {}
+        intent_name = str(pending_action.get("intent_name") or "confirmation")
+        intent_summary = str(pending_action.get("intent_summary") or "Pending confirmation")
+        return AssistantPlan(
+            tool=tool,
+            arguments=arguments,
+            intent_name=intent_name,
+            intent_summary=intent_summary,
+        )
+
+    def _clear_pending_action(self, query_context: dict[str, Any]) -> dict[str, Any]:
+        cleaned = dict(query_context)
+        cleaned.pop("pending_action", None)
+        return cleaned
 
     def _confirmation_message(self, tool: str, arguments: dict[str, Any]) -> str:
         messages = {

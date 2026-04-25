@@ -22,6 +22,10 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "help": "read_only",
 }
 
+CONFIRMATION_REQUIRED_TOOLS = {
+    tool for tool, level in TOOL_RISK_LEVELS.items() if level == "requires_confirmation"
+}
+
 
 def get_tool_risk_level(tool: str) -> str:
     return TOOL_RISK_LEVELS.get(tool, "restricted")
@@ -29,4 +33,3 @@ def get_tool_risk_level(tool: str) -> str:
 
 def tool_requires_confirmation(tool: str) -> bool:
     return get_tool_risk_level(tool) == "requires_confirmation"
-
