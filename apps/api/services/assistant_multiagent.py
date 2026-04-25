@@ -2668,7 +2668,7 @@ class ResponseAgent:
                 messages=messages,
                 job_id=job_id,
                 errors=errors,
-                query_context=query_context or {},
+                query_context=task_context or {},
                 task=task,
                 task_context=task_context or {},
             )

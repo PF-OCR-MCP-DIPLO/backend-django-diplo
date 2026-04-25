@@ -277,6 +277,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             ]
 
         if ocr_mode == "tesseract":
+            attrs["ocr_provider"] = "ollama"
             effective_ocr_model = attrs.get(
                 "ocr_model", getattr(instance, "ocr_model", "")
             )

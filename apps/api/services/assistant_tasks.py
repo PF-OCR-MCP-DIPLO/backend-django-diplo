@@ -54,21 +54,20 @@ def resolve_assistant_task(
         )
     )
 
+    if (
+        has_row_context
+        or has_ocr_context
+        or any(term in text for term in ("fila", "row", "registro", "celda"))
+    ):
+        if any(
+            term in text
+            for term in ("corrige", "corregir", "corrección", "correccion", "suger")
+        ):
+            return AssistantTask("suggest_row_correction", "Sugerir corrección de fila")
+        return AssistantTask("explain_row_issue", "Explicar problema de una fila")
+
     if tool == "get_job_logs" or any(
-        term in text
-        for term in (
-            "log",
-            "ocr",
-            "error",
-            "fallo",
-            "fila",
-            "celda",
-            "monto",
-            "fecha",
-            "referencia",
-            "resultado",
-            "export",
-        )
+        term in text for term in ("log", "ocr", "error", "fallo", "resultado")
     ):
         return AssistantTask("summarize_extraction_logs", "Resumir logs del job")
 
@@ -99,18 +98,6 @@ def resolve_assistant_task(
         )
     ):
         return AssistantTask("explain_job_summary", "Explicar resumen del job")
-
-    if (
-        has_row_context
-        or has_ocr_context
-        or any(term in text for term in ("fila", "row", "registro", "celda"))
-    ):
-        if any(
-            term in text
-            for term in ("corrige", "corregir", "corrección", "correccion", "suger")
-        ):
-            return AssistantTask("suggest_row_correction", "Sugerir corrección de fila")
-        return AssistantTask("explain_row_issue", "Explicar problema de una fila")
 
     if any(term in text for term in ("hallazgo", "error", "errores", "issue")):
         return AssistantTask("explain_job_findings", "Explicar hallazgos del job")
