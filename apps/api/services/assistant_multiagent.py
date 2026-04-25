@@ -23,6 +23,7 @@ from apps.api.services.assistant_tasks import (
 from apps.api.services.pending_actions import (
     build_pending_action,
     clear_pending_action,
+    confirmation_message,
     normalize_pending_action,
     validate_pending_action,
 )
@@ -2824,7 +2825,6 @@ class AssistantAgent:
                         pending_error,
                         normalized_query_context,
                     )
-                pending_plan = self._plan_from_pending_action(pending_action)
                 if self._is_confirmation_message(last_user_message):
                     revalidation_error = validate_pending_action(
                         pending_action,
@@ -2835,6 +2835,7 @@ class AssistantAgent:
                             revalidation_error,
                             normalized_query_context,
                         )
+                    pending_plan = self._plan_from_pending_action(pending_action)
                     tool_payload = self.tool_agent.execute(
                         pending_plan, job_id=job_id or pending_action.get("job_id")
                     )
@@ -2903,46 +2904,56 @@ class AssistantAgent:
                 job_id=job_id,
                 query_context=normalized_query_context,
             )
-            clarification = deposit_correction_needs_clarification(
-                plan.arguments if isinstance(plan.arguments, dict) else {},
-                job_id,
-            )
-            if clarification is not None:
-                return self._clarification_response(
-                    clarification,
-                    normalized_query_context,
-                    task=task,
-                    task_context=task_context,
+            if plan.tool == "update_deposit_correction":
+                clarification = deposit_correction_needs_clarification(
+                    plan.arguments if isinstance(plan.arguments, dict) else {},
+                    job_id,
                 )
+                if clarification is not None:
+                    return self._clarification_response(
+                        clarification,
+                        normalized_query_context,
+                        task=task,
+                        task_context=task_context,
+                    )
             if tool_requires_confirmation(plan.tool):
                 pending_context = dict(normalized_query_context)
-                correction_arguments = (
-                    deposit_correction_payload_for_correction(plan.arguments)
-                    if isinstance(plan.arguments, dict)
-                    else {}
-                )
+                if plan.tool == "update_deposit_correction":
+                    confirmation_arguments = (
+                        deposit_correction_payload_for_correction(plan.arguments)
+                        if isinstance(plan.arguments, dict)
+                        else {}
+                    )
+                    confirmation_reply = deposit_correction_confirmation_message(
+                        confirmation_arguments
+                    )
+                    confirmation_summary = deposit_correction_summary(
+                        confirmation_arguments
+                    )
+                else:
+                    confirmation_arguments = (
+                        plan.arguments if isinstance(plan.arguments, dict) else {}
+                    )
+                    confirmation_reply = confirmation_message(
+                        plan.tool, confirmation_arguments
+                    )
+                    confirmation_summary = plan.intent_summary
                 pending_context["pending_action"] = build_pending_action(
                     tool=plan.tool,
-                    arguments=correction_arguments,
+                    arguments=confirmation_arguments,
                     intent_name=plan.intent_name,
-                    intent_summary=deposit_correction_summary(correction_arguments),
+                    intent_summary=confirmation_summary,
                     job_id=job_id,
                 )
                 return {
-                    "reply": deposit_correction_confirmation_message(
-                        correction_arguments
-                    ),
-                    "message": deposit_correction_confirmation_message(
-                        correction_arguments
-                    ),
+                    "reply": confirmation_reply,
+                    "message": confirmation_reply,
                     "tool": plan.tool,
                     "data": {
-                        "detail": deposit_correction_confirmation_message(
-                            correction_arguments
-                        ),
+                        "detail": confirmation_reply,
                         "requires_confirmation": True,
                         "risk_level": get_tool_risk_level(plan.tool),
-                        "arguments": correction_arguments,
+                        "arguments": confirmation_arguments,
                     },
                     "task": task.name,
                     "task_context": task_context,

@@ -98,6 +98,7 @@ class AssistantChatServiceTests(TestCase):
             "tool": plan.tool,
             "job_id": job_id,
         }
+        agent.response_agent.compose = lambda *args, **kwargs: "Procesamiento iniciado."
 
         response = agent.answer(
             messages=[{"role": "user", "content": "confirmar"}],

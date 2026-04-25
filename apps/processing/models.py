@@ -87,6 +87,7 @@ class ProcessingSettings(models.Model):
         OPENAI = "openai", "OpenAI"
         GEMINI = "gemini", "Gemini"
         DEEPSEEK = "deepseek", "DeepSeek"
+        ANTHROPIC = "anthropic", "Anthropic"
 
     singleton_key = models.CharField(max_length=32, unique=True, default="default")
     ocr_mode = models.CharField(

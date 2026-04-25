@@ -381,6 +381,78 @@ class DocumentApiTests(TestCase):
         self.assertEqual(options_response.status_code, 200)
         self.assertIn("auto", options_response.json()["ocr_modes"])
 
+    def test_settings_options_returns_complete_defensive_contract(self):
+        with patch(
+            "apps.processing.services.settings_service.list_installed_models",
+            side_effect=RuntimeError("ollama unavailable"),
+        ):
+            response = self.client.get("/api/processing/settings/options/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["ocr_modes"], ["tesseract", "vision", "auto"])
+        self.assertEqual(
+            payload["providers"]["ocr"], ["ollama", "openai", "gemini", "deepseek"]
+        )
+        self.assertEqual(
+            payload["providers"]["llm"],
+            ["ollama", "openai", "gemini", "deepseek", "anthropic"],
+        )
+        self.assertIn("provider_models", payload)
+        self.assertIn("provider_requirements", payload)
+        for provider in payload["providers"]["llm"]:
+            self.assertIn(provider, payload["provider_models"])
+            self.assertIn(provider, payload["provider_requirements"])
+            self.assertIsInstance(payload["provider_models"][provider]["ocr"], list)
+            self.assertIsInstance(payload["provider_models"][provider]["llm"], list)
+            self.assertIn("operational", payload["provider_requirements"][provider])
+            self.assertIn(
+                "requires_api_key", payload["provider_requirements"][provider]
+            )
+
+    def test_settings_rejects_invalid_payload_with_clear_error(self):
+        response = self.client.patch(
+            "/api/processing/settings/",
+            {
+                "ocr_mode": "vision",
+                "ocr_provider": "anthropic",
+                "llm_provider": "ollama",
+                "llm_model": "gemma3:1b-it-qat",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        self.assertIn("ocr_provider", payload["error"]["details"])
+
+    def test_job_contract_is_safe_without_images_or_export(self):
+        process_run = ProcessRun.objects.create(
+            original_filename="empty.docx", status=ProcessRun.Status.UPLOADED
+        )
+
+        detail_response = self.client.get(f"/api/jobs/{process_run.pk}/")
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertEqual(detail["source_images"], [])
+        self.assertIsNone(detail["excel_file"])
+        self.assertIn("provider_config_snapshot", detail)
+
+        list_response = self.client.get("/api/jobs/")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertIsInstance(list_response.json(), list)
+
+    def test_job_logs_not_found_uses_error_envelope(self):
+        response = self.client.get("/api/jobs/999999/logs/")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "not_found")
+
+    def test_export_missing_job_uses_error_envelope(self):
+        response = self.client.post("/api/jobs/999999/export/")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "not_found")
+
     def test_settings_validation_for_non_operational_providers(self):
         response = self.client.patch(
             "/api/processing/settings/",

@@ -151,6 +151,7 @@ def deposit_correction_failure_description(payload: dict[str, Any]) -> str:
         return str(detail)
     return "No fue posible corregir la fila solicitada."
 
+
 def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         return {"detail": "update_deposit_correction requiere arguments como objeto."}
@@ -181,7 +182,9 @@ def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
 
     values = deposit_correction_values_from_arguments(arguments)
     if not values:
-        return {"detail": "Para corregir la fila necesito al menos un campo a actualizar."}
+        return {
+            "detail": "Para corregir la fila necesito al menos un campo a actualizar."
+        }
 
     unknown_fields = set(values) - _ALLOWED_UPDATE_FIELDS
     if unknown_fields:
@@ -195,9 +198,7 @@ def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
         "fecha_consignacion": _to_ddmmyyyy(
             values.get("fecha_consignacion", deposit.fecha_consignacion)
         ),
-        "hora_consignacion": values.get(
-            "hora_consignacion", deposit.hora_consignacion
-        ),
+        "hora_consignacion": values.get("hora_consignacion", deposit.hora_consignacion),
         "referencia": values.get("referencia", deposit.referencia),
         "valor": values.get("valor", deposit.valor),
     }
@@ -227,6 +228,7 @@ def execute_deposit_correction(arguments: dict[str, Any]) -> dict[str, Any]:
             "valor": str(updated_deposit.valor),
         },
     }
+
 
 def _to_ddmmyyyy(value: Any) -> str:
     text = str(value or "").strip()

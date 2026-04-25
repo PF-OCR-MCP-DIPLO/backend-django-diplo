@@ -13,6 +13,9 @@ from apps.processing.models import (
 )
 from apps.processing.services.extraction_criteria import normalize_extraction_criteria
 
+OCR_PROVIDER_VALUES = {"ollama", "openai", "gemini", "deepseek"}
+LLM_PROVIDER_VALUES = {"ollama", "openai", "gemini", "deepseek", "anthropic"}
+
 
 class UploadDocumentSerializer(serializers.Serializer):
     file = serializers.FileField()
@@ -210,6 +213,18 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         if request_timeout_seconds < 5 or request_timeout_seconds > 600:
             errors["request_timeout_seconds"] = [
                 "Timeout must be between 5 and 600 seconds."
+            ]
+        if ocr_provider not in OCR_PROVIDER_VALUES:
+            errors["ocr_provider"] = [
+                f"OCR provider '{ocr_provider}' is not supported for OCR."
+            ]
+        if llm_provider not in LLM_PROVIDER_VALUES:
+            errors["llm_provider"] = [
+                f"LLM provider '{llm_provider}' is not supported."
+            ]
+        if assistant_provider not in LLM_PROVIDER_VALUES:
+            errors["assistant_provider"] = [
+                f"Assistant provider '{assistant_provider}' is not supported."
             ]
 
         if ocr_mode in ("vision", "auto") and ocr_provider != "ollama":

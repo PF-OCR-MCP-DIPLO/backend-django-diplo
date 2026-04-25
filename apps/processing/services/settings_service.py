@@ -12,6 +12,20 @@ from apps.processing.services.ollama_models import (
     list_installed_models,
 )
 
+OCR_PROVIDERS = [
+    ProcessingSettings.Provider.OLLAMA,
+    ProcessingSettings.Provider.OPENAI,
+    ProcessingSettings.Provider.GEMINI,
+    ProcessingSettings.Provider.DEEPSEEK,
+]
+LLM_PROVIDERS = [
+    ProcessingSettings.Provider.OLLAMA,
+    ProcessingSettings.Provider.OPENAI,
+    ProcessingSettings.Provider.GEMINI,
+    ProcessingSettings.Provider.DEEPSEEK,
+    ProcessingSettings.Provider.ANTHROPIC,
+]
+
 
 @dataclass(frozen=True)
 class RuntimeProcessingConfig:
@@ -93,42 +107,37 @@ def as_snapshot_dict(runtime_config):
 
 
 def available_options():
-    ollama_models = list_installed_models()
+    try:
+        ollama_models = list_installed_models()
+    except Exception:
+        ollama_models = []
     fallback_llm_models = [settings.OLLAMA_MODEL, "llama3.2:3b", "qwen2.5:3b"]
     fallback_ocr_models = [settings.OLLAMA_VISION_MODEL, "llava:7b", "moondream"]
+    provider_models = {
+        "ollama": {
+            "ocr": ollama_models or fallback_ocr_models,
+            "llm": ollama_models or fallback_llm_models,
+        },
+        "openai": {"ocr": [], "llm": []},
+        "gemini": {"ocr": [], "llm": []},
+        "deepseek": {"ocr": [], "llm": []},
+        "anthropic": {"ocr": [], "llm": []},
+    }
+    provider_requirements = {
+        provider: {
+            "operational": provider == ProcessingSettings.Provider.OLLAMA,
+            "requires_api_key": provider != ProcessingSettings.Provider.OLLAMA,
+        }
+        for provider in LLM_PROVIDERS
+    }
     return {
         "ocr_modes": [choice[0] for choice in ProcessingSettings.OCRMode.choices],
         "providers": {
-            "ocr": [choice[0] for choice in ProcessingSettings.Provider.choices],
-            "llm": [choice[0] for choice in ProcessingSettings.Provider.choices],
+            "ocr": [provider.value for provider in OCR_PROVIDERS],
+            "llm": [provider.value for provider in LLM_PROVIDERS],
         },
-        "provider_models": {
-            "ollama": {
-                "ocr": ollama_models or fallback_ocr_models,
-                "llm": ollama_models or fallback_llm_models,
-            },
-            "openai": {"ocr": [], "llm": []},
-            "gemini": {"ocr": [], "llm": []},
-            "deepseek": {"ocr": [], "llm": []},
-        },
-        "provider_requirements": {
-            "ollama": {
-                "operational": True,
-                "requires_api_key": False,
-            },
-            "openai": {
-                "operational": False,
-                "requires_api_key": True,
-            },
-            "gemini": {
-                "operational": False,
-                "requires_api_key": True,
-            },
-            "deepseek": {
-                "operational": False,
-                "requires_api_key": True,
-            },
-        },
+        "provider_models": provider_models,
+        "provider_requirements": provider_requirements,
     }
 
 
