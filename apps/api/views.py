@@ -42,7 +42,7 @@ class HealthView(APIView):
 
 class DocumentUploadView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
     throttle_scope = "documents_upload"
 
     def post(self, request):
@@ -67,7 +67,7 @@ class DocumentUploadView(APIView):
 
 class JobListView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
 
     def get(self, request):
         jobs = ProcessRun.objects.order_by("-created_at")
@@ -77,7 +77,7 @@ class JobListView(APIView):
 
 class JobDetailView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
 
     def get(self, request, pk):
         job = get_object_or_404(
@@ -89,11 +89,8 @@ class JobDetailView(APIView):
 
 class JobProcessView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
     throttle_scope = "jobs_process"
-
-    def get_permissions(self):
-        return [ApiKeyPermission()]
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
@@ -120,11 +117,8 @@ class JobProcessView(APIView):
 
 class JobExportView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
     throttle_scope = "jobs_export"
-
-    def get_permissions(self):
-        return [ApiKeyPermission()]
 
     def post(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
@@ -145,7 +139,7 @@ class JobExportView(APIView):
 
 class JobLogsView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
 
     def get(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
@@ -158,10 +152,7 @@ class JobLogsView(APIView):
 
 class JobDepositsBulkUpdateView(APIView):
     authentication_classes = []
-    permission_classes = []
-
-    def get_permissions(self):
-        return [ApiKeyPermission()]
+    permission_classes = [ApiKeyPermission]
 
     def patch(self, request, pk):
         job = get_object_or_404(ProcessRun, pk=pk)
@@ -196,14 +187,8 @@ class JobDepositsBulkUpdateView(APIView):
 
 class ProcessingSettingsView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
     throttle_scope = "processing_settings"
-
-    def get_permissions(self):
-        # Read is public for DX; updates require API key when configured.
-        if self.request.method.upper() == "PATCH":
-            return [ApiKeyPermission()]
-        return []
 
     def get(self, request):
         serializer = ProcessingSettingsSerializer(get_or_create_processing_settings())
@@ -221,7 +206,7 @@ class ProcessingSettingsView(APIView):
 
 class ProcessingSettingsOptionsView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
 
     def get(self, request):
         return Response(available_options())
@@ -229,7 +214,7 @@ class ProcessingSettingsOptionsView(APIView):
 
 class OllamaModelsView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
 
     def get(self, request):
         return Response(get_ollama_models_snapshot())
@@ -237,7 +222,7 @@ class OllamaModelsView(APIView):
 
 class AssistantChatView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [ApiKeyPermission]
 
     def post(self, request):
         serializer = AssistantChatSerializer(data=request.data)

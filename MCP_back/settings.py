@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
@@ -14,12 +15,16 @@ if not DEBUG and SECRET_KEY == DEFAULT_SECRET_KEY:
         "DJANGO_SECRET_KEY must be configured when DJANGO_DEBUG=0."
     )
 
-default_allowed_hosts = "localhost,127.0.0.1"
+default_allowed_hosts = "localhost,127.0.0.1" if DEBUG else ""
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", default_allowed_hosts).split(",")
     if host.strip()
 ]
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured(
+        "DJANGO_ALLOWED_HOSTS must be configured when DJANGO_DEBUG=0."
+    )
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -69,12 +74,49 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "MCP_back.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+
+def _database_config():
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if not database_url:
+        if DEBUG:
+            return {
+                "default": {
+                    "ENGINE": "django.db.backends.sqlite3",
+                    "NAME": BASE_DIR / "db.sqlite3",
+                }
+            }
+        raise ImproperlyConfigured(
+            "DATABASE_URL must be configured when DJANGO_DEBUG=0."
+        )
+    parsed = urlparse(database_url)
+    if parsed.scheme in {"sqlite", "sqlite3"}:
+        return {
+            "default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": parsed.path or str(BASE_DIR / "db.sqlite3"),
+            }
+        }
+    engine_map = {
+        "postgres": "django.db.backends.postgresql",
+        "postgresql": "django.db.backends.postgresql",
+        "mysql": "django.db.backends.mysql",
     }
-}
+    engine = engine_map.get(parsed.scheme)
+    if not engine:
+        raise ImproperlyConfigured("Unsupported DATABASE_URL scheme.")
+    return {
+        "default": {
+            "ENGINE": engine,
+            "NAME": parsed.path.lstrip("/"),
+            "USER": parsed.username or "",
+            "PASSWORD": parsed.password or "",
+            "HOST": parsed.hostname or "",
+            "PORT": str(parsed.port or ""),
+        }
+    }
+
+
+DATABASES = _database_config()
 
 AUTH_PASSWORD_VALIDATORS = []
 
@@ -93,11 +135,19 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
-        "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173" if DEBUG else "",
     ).split(",")
     if origin.strip()
 ]
 CORS_ALLOW_HEADERS = (*default_headers, "x-api-key")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CSRF_TRUSTED_ORIGINS", ",".join(CORS_ALLOWED_ORIGINS)
+    ).split(",")
+    if origin.strip()
+]
 PROCESS_JOBS_ASYNC = os.environ.get("PROCESS_JOBS_ASYNC", "1") == "1"
 
 REST_FRAMEWORK = {
@@ -122,10 +172,25 @@ REST_FRAMEWORK = {
     },
 }
 
-# Minimal auth: enable by setting API_KEY env var. If empty, endpoints remain open.
 API_KEY = os.environ.get("API_KEY", "")
+ALLOW_OPEN_API_FOR_DEV = (
+    os.environ.get("ALLOW_OPEN_API_FOR_DEV", "1" if DEBUG else "0") == "1"
+)
 if not DEBUG and not API_KEY:
     raise ImproperlyConfigured("API_KEY must be configured when DJANGO_DEBUG=0.")
+if not DEBUG and ALLOW_OPEN_API_FOR_DEV:
+    raise ImproperlyConfigured(
+        "ALLOW_OPEN_API_FOR_DEV cannot be enabled when DJANGO_DEBUG=0."
+    )
+
+DOCX_MAX_UPLOAD_BYTES = int(
+    os.environ.get("DOCX_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))
+)
+DOCX_MAX_IMAGES = int(os.environ.get("DOCX_MAX_IMAGES", "50"))
+EXTRACTED_IMAGE_MAX_BYTES = int(
+    os.environ.get("EXTRACTED_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
+)
+MCP_ENABLE_MUTATIONS = os.environ.get("MCP_ENABLE_MUTATIONS", "0") == "1"
 
 # Enables deterministic stub OCR/LLM providers for E2E and local demos.
 STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"
@@ -166,3 +231,14 @@ LOGGING = {
     },
     "root": {"handlers": ["console"], "level": os.environ.get("LOG_LEVEL", "INFO")},
 }
+
+SECURE_SSL_REDIRECT = (
+    os.environ.get("SECURE_SSL_REDIRECT", "1" if not DEBUG else "0") == "1"
+)
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_HSTS_SECONDS = int(
+    os.environ.get("SECURE_HSTS_SECONDS", "31536000" if not DEBUG else "0")
+)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"

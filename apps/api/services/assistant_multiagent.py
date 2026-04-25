@@ -133,7 +133,11 @@ _RE_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _allow_unsafe_sql_enabled() -> bool:
-    return bool(getattr(settings, "ALLOW_UNSAFE_SQL", False))
+    return False
+
+
+def _mutation_tools_enabled() -> bool:
+    return bool(getattr(settings, "MCP_ENABLE_MUTATIONS", False))
 
 
 def _confirmation_payload(
@@ -1650,9 +1654,15 @@ class ToolExecutionAgent:
             return self._execute_query_database(plan.arguments.get("query"))
 
         if plan.tool == "crud_database":
+            if not _mutation_tools_enabled():
+                return {"detail": "crud_database is disabled by server configuration."}
             return self._execute_crud_database(plan.arguments)
 
         if plan.tool == "update_deposit_correction":
+            if not _mutation_tools_enabled():
+                return {
+                    "detail": "update_deposit_correction is disabled by server configuration."
+                }
             return execute_deposit_correction(plan.arguments)
 
         if plan.tool == "list_jobs":
@@ -1760,6 +1770,10 @@ class ToolExecutionAgent:
             return available_options()
 
         if plan.tool == "update_processing_settings":
+            if not _mutation_tools_enabled():
+                return {
+                    "detail": "update_processing_settings is disabled by server configuration."
+                }
             instance = get_or_create_processing_settings()
             serializer = ProcessingSettingsSerializer(
                 instance, data=plan.arguments, partial=True
@@ -1769,6 +1783,8 @@ class ToolExecutionAgent:
             return serializer.data
 
         if plan.tool == "process_job":
+            if not _mutation_tools_enabled():
+                return {"detail": "process_job is disabled by server configuration."}
             if resolved_job_id is None:
                 return {"detail": "job_id is required"}
             job = ProcessRun.objects.get(pk=resolved_job_id)
@@ -1779,6 +1795,10 @@ class ToolExecutionAgent:
             return ProcessRunDetailSerializer(processed, context={"request": None}).data
 
         if plan.tool == "export_job_excel":
+            if not _mutation_tools_enabled():
+                return {
+                    "detail": "export_job_excel is disabled by server configuration."
+                }
             if resolved_job_id is None:
                 return {"detail": "job_id is required"}
             job = ProcessRun.objects.get(pk=resolved_job_id)

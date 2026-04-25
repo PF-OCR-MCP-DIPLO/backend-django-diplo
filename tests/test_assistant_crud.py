@@ -1,12 +1,13 @@
 from decimal import Decimal
 
 from django.core.files.base import ContentFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.api.services.assistant_multiagent import AssistantPlan, ToolExecutionAgent
 from apps.processing.models import ExtractedDeposit, ProcessRun, SourceImage
 
 
+@override_settings(MCP_ENABLE_MUTATIONS=True)
 class AssistantCrudToolTests(TestCase):
     def setUp(self):
         self.executor = ToolExecutionAgent()

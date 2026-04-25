@@ -13,6 +13,7 @@ from apps.processing.models import (
 )
 
 
+@override_settings(MCP_ENABLE_MUTATIONS=True)
 class AssistantToolExecutionTests(TestCase):
     def setUp(self):
         self.executor = ToolExecutionAgent()
@@ -227,8 +228,7 @@ class AssistantToolExecutionTests(TestCase):
         self.assertEqual(payload["meta"]["rows_count"], 1)
         self.assertEqual(payload["rows"][0]["original_filename"], "test.docx")
 
-    @override_settings(ALLOW_UNSAFE_SQL=True)
-    def test_unsafe_sql_mode_reports_affected_rows(self):
+    def test_sql_updates_remain_blocked_even_if_legacy_flag_exists(self):
         payload = self._execute(
             "query_database_sql",
             {
@@ -240,5 +240,19 @@ class AssistantToolExecutionTests(TestCase):
             },
         )
 
-        self.assertTrue(payload["meta"]["unsafe_sql_enabled"])
-        self.assertIn("rows_affected", payload["meta"])
+        self.assertIn("solo se permiten", payload["detail"].lower())
+
+
+class AssistantMutationDisabledTests(TestCase):
+    def test_mutation_tools_are_disabled_by_default(self):
+        executor = ToolExecutionAgent()
+        plan = AssistantPlan(
+            tool="process_job",
+            arguments={"job_id": 1},
+            intent_name="test",
+            intent_summary="test",
+        )
+
+        payload = executor.execute(plan, job_id=1)
+
+        self.assertIn("disabled", payload["detail"])

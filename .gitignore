@@ -178,3 +178,4 @@ cython_debug/
 *.xlsx
 
 codigo_select.txt
+backend_audit.txt

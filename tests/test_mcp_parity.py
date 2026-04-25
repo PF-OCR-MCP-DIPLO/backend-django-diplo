@@ -3,7 +3,7 @@ import os
 import tempfile
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.api.services.assistant_multiagent import AssistantPlan, ToolExecutionAgent
 from mcp_server import server as mcp_server
@@ -51,6 +51,7 @@ class McpParityTests(TestCase):
             self._multiagent_payload("get_processing_settings_options"),
         )
 
+    @override_settings(MCP_ENABLE_MUTATIONS=True)
     def test_deposit_correction_tool_matches_multiagent(self):
         payload = {
             "job_id": 10,
@@ -64,6 +65,11 @@ class McpParityTests(TestCase):
             self._mcp_payload(mcp_server.update_deposit_correction(**payload)),
             self._multiagent_payload("update_deposit_correction", payload, job_id=10),
         )
+
+    def test_mutation_tool_is_blocked_when_disabled(self):
+        envelope = json.loads(mcp_server.process_job(1))
+        self.assertFalse(envelope["ok"])
+        self.assertEqual(envelope["status_code"], 403)
 
     def test_upload_and_status_match_multiagent(self):
         tmp_path = ""
@@ -101,6 +107,7 @@ class McpParityTests(TestCase):
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
+    @override_settings(MCP_ENABLE_MUTATIONS=True)
     def test_log_alias_returns_same_payload(self):
         tmp_path = ""
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:

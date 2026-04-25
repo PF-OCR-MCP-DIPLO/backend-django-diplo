@@ -1,3 +1,5 @@
+from django.conf import settings
+
 MIN_IMAGE_BYTES = 32
 
 
@@ -9,6 +11,11 @@ def validate_source_image(source_image):
         source_image.image_file.close()
     if len(binary) < MIN_IMAGE_BYTES:
         raise ValueError("Extracted image is too small or corrupt.")
+    max_image_bytes = int(
+        getattr(settings, "EXTRACTED_IMAGE_MAX_BYTES", 5 * 1024 * 1024)
+    )
+    if len(binary) > max_image_bytes:
+        raise ValueError("Extracted image exceeds maximum allowed size.")
     if not _looks_like_supported_image(binary):
         raise ValueError("Extracted image is invalid or unreadable.")
 

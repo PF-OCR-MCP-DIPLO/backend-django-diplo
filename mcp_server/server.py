@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 import django
+from django.conf import settings
 from mcp.server.fastmcp import FastMCP
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "MCP_back.settings")
@@ -20,6 +21,10 @@ from mcp_server.schemas import (
 )
 
 mcp = FastMCP("backend-django-diplo")
+
+
+def _mutations_enabled() -> bool:
+    return bool(getattr(settings, "MCP_ENABLE_MUTATIONS", False))
 
 
 def _as_json(payload: Any) -> str:
@@ -69,6 +74,14 @@ def upload_document(file_path: str) -> str:
 @mcp.tool()
 def process_job(job_id: int) -> str:
     """Run OCR and extraction pipeline for an existing job."""
+    if not _mutations_enabled():
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 403,
+                "detail": "process_job is disabled by server configuration.",
+            }
+        )
     args = JobIdInput(job_id=job_id)
     return _run_local_tool("process_job", {"job_id": args.job_id}, job_id=args.job_id)
 
@@ -104,6 +117,14 @@ def list_job_logs(job_id: int) -> str:
 @mcp.tool()
 def export_job_excel(job_id: int) -> str:
     """Generate Excel output for a completed job."""
+    if not _mutations_enabled():
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 403,
+                "detail": "export_job_excel is disabled by server configuration.",
+            }
+        )
     args = JobIdInput(job_id=job_id)
     return _run_local_tool(
         "export_job_excel", {"job_id": args.job_id}, job_id=args.job_id
@@ -120,6 +141,14 @@ def update_deposit_correction(
     hora_consignacion: str | None = None,
 ) -> str:
     """Correct a single extracted deposit row with confirmation required by backend."""
+    if not _mutations_enabled():
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 403,
+                "detail": "update_deposit_correction is disabled by server configuration.",
+            }
+        )
     args = DepositCorrectionInput(
         job_id=job_id,
         deposit_id=deposit_id,
@@ -164,6 +193,14 @@ def update_processing_settings(
     request_timeout_seconds: int | None = None,
 ) -> str:
     """Patch processing settings with partial updates."""
+    if not _mutations_enabled():
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 403,
+                "detail": "update_processing_settings is disabled by server configuration.",
+            }
+        )
     args = UpdateProcessingSettingsInput(
         ocr_mode=ocr_mode,
         ocr_provider=ocr_provider,
@@ -210,6 +247,14 @@ def crud_database(
     query: dict[str, Any] | None = None,
 ) -> str:
     """Execute structured CRUD operations over allowed sources."""
+    if not _mutations_enabled():
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 403,
+                "detail": "crud_database is disabled by server configuration.",
+            }
+        )
     return _run_local_tool(
         "crud_database",
         {

@@ -1,5 +1,7 @@
+import json
 from decimal import Decimal
 
+from django.conf import settings
 from pydantic import ValidationError as PydanticValidationError
 from rest_framework import serializers
 
@@ -23,6 +25,11 @@ class UploadDocumentSerializer(serializers.Serializer):
     def validate_file(self, value):
         if not value.name.lower().endswith(".docx"):
             raise serializers.ValidationError("Only .docx files are supported.")
+        max_size = int(getattr(settings, "DOCX_MAX_UPLOAD_BYTES", 10 * 1024 * 1024))
+        if getattr(value, "size", 0) > max_size:
+            raise serializers.ValidationError(
+                f"File exceeds maximum allowed size of {max_size} bytes."
+            )
         return value
 
 
@@ -175,6 +182,13 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
     def get_has_assistant_api_key(self, obj):
         return bool(obj.assistant_api_key)
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["extraction_criteria"] = normalize_extraction_criteria(
+            data.get("extraction_criteria")
+        )
+        return data
+
     def validate(self, attrs):
         instance = self.instance
         ocr_mode = attrs.get("ocr_mode", getattr(instance, "ocr_mode", "vision"))
@@ -289,6 +303,9 @@ class AssistantChatSerializer(serializers.Serializer):
     )
     errors = serializers.IntegerField(required=False, min_value=0, default=0)
     query_context = serializers.DictField(required=False, default=dict)
+    max_messages = 20
+    max_message_length = 4000
+    max_query_context_chars = 4000
 
     def validate(self, attrs):
         camel_job_id = attrs.pop("jobId", None)
@@ -306,21 +323,53 @@ class AssistantChatSerializer(serializers.Serializer):
         return attrs
 
     def validate_messages(self, value):
-        allowed_roles = {"user", "assistant", "system"}
+        if len(value) > self.max_messages:
+            raise serializers.ValidationError(
+                f"No more than {self.max_messages} messages are allowed."
+            )
+        allowed_roles = {"user", "assistant"}
         cleaned: list[dict[str, str]] = []
         for item in value:
             role = str(item.get("role") or "").strip()
             content = item.get("content")
             if role not in allowed_roles:
                 raise serializers.ValidationError(
-                    f"Invalid message role '{role}'. Allowed: user, assistant, system."
+                    f"Invalid message role '{role}'. Allowed: user, assistant."
                 )
             if not isinstance(content, str):
                 raise serializers.ValidationError(
                     "Each message content must be a string."
                 )
+            if len(content) > self.max_message_length:
+                raise serializers.ValidationError(
+                    f"Each message content must be at most {self.max_message_length} characters."
+                )
             cleaned.append({"role": role, "content": content})
         return cleaned
+
+    def validate_query_context(self, value):
+        serialized = json.dumps(value)
+        if len(serialized) > self.max_query_context_chars:
+            raise serializers.ValidationError("query_context is too large.")
+        if self._nesting_depth(value) > 4:
+            raise serializers.ValidationError("query_context nesting is too deep.")
+        return value
+
+    def _nesting_depth(self, value, current=0):
+        if isinstance(value, dict):
+            if len(value) > 20:
+                return current + 10
+            return max(
+                [current]
+                + [self._nesting_depth(item, current + 1) for item in value.values()]
+            )
+        if isinstance(value, list):
+            if len(value) > 20:
+                return current + 10
+            return max(
+                [current] + [self._nesting_depth(item, current + 1) for item in value]
+            )
+        return current
 
 
 class BulkDepositCorrectionItemSerializer(serializers.Serializer):

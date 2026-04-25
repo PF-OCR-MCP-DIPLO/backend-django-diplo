@@ -113,7 +113,12 @@ def build_docx_without_images():
     return buffer.getvalue()
 
 
-@override_settings(PROCESS_JOBS_ASYNC=False)
+@override_settings(
+    PROCESS_JOBS_ASYNC=False,
+    API_KEY="",
+    ALLOW_OPEN_API_FOR_DEV=True,
+    MCP_ENABLE_MUTATIONS=True,
+)
 class DocumentApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -125,6 +130,13 @@ class DocumentApiTests(TestCase):
         response = self.client.get("/api/health/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+
+    @override_settings(API_KEY="test-api-key", ALLOW_OPEN_API_FOR_DEV=False)
+    def test_sensitive_endpoints_require_api_key(self):
+        response = self.client.get("/api/jobs/")
+        self.assertEqual(response.status_code, 403)
+        authorized = self.client.get("/api/jobs/", HTTP_X_API_KEY="test-api-key")
+        self.assertEqual(authorized.status_code, 200)
 
     def test_upload_rejects_non_docx_with_error_envelope(self):
         upload = SimpleUploadedFile("file.txt", b"nope", content_type="text/plain")
@@ -176,7 +188,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]
@@ -244,7 +259,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]
@@ -286,7 +304,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]
@@ -308,7 +329,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]
@@ -327,7 +351,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]
@@ -528,7 +555,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]
@@ -554,7 +584,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]
@@ -593,7 +626,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         job_id = upload_response.json()["id"]
 
@@ -649,7 +685,7 @@ class DocumentApiTests(TestCase):
         self.assertEqual(corrected["valor"], "175000.00")
         self.assertEqual(corrected["observations"], [])
 
-        detail_response = self.client.get(f"/api/jobs/{job_id}/")
+        detail_response = self.client.get(f"/api/jobs/{job_id}/", HTTP_X_API_KEY="dev")
         refreshed = detail_response.json()["source_images"][0]["deposits"][0]
         self.assertEqual(refreshed["referencia"], "REF999")
 
@@ -683,7 +719,10 @@ class DocumentApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         upload_response = self.client.post(
-            "/api/documents/upload/", {"file": upload}, format="multipart"
+            "/api/documents/upload/",
+            {"file": upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
         )
         self.assertEqual(upload_response.status_code, 201)
         job_id = upload_response.json()["id"]

@@ -2,6 +2,7 @@ import zipfile
 from hashlib import sha256
 from pathlib import Path
 
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
 
@@ -17,35 +18,38 @@ from apps.processing.services.settings_service import (
 
 
 def create_process_run_from_upload(uploaded_file):
-    process_run = ProcessRun.objects.create(
-        original_filename=uploaded_file.name,
-        status=ProcessRun.Status.UPLOADED,
-        provider_config_snapshot=_provider_snapshot(),
-    )
+    _validate_uploaded_docx(uploaded_file)
+    process_run = None
+    created_image_paths = []
     try:
-        uploaded_file.seek(0)
-        process_run.source_docx.save(uploaded_file.name, uploaded_file, save=True)
-        process_run.source_docx.open("rb")
-        try:
-            extracted_images = extract_images_in_order(process_run.source_docx)
-            # Extract text from the document
-            process_run.source_docx.seek(0)
-            extracted_text = extract_text_from_docx(process_run.source_docx)
-            process_run.extracted_text = extracted_text
-            process_run.save(update_fields=["extracted_text", "updated_at"])
-        except (zipfile.BadZipFile, KeyError, ValueError) as error:
-            raise UploadValidationError(
-                code="invalid_docx",
-                message="El archivo .docx no es valido o esta corrupto.",
-                details={"reason": str(error)},
-            ) from error
-        process_run.source_docx.close()
-        if not extracted_images:
-            raise UploadValidationError(
-                code="docx_no_images",
-                message="El archivo .docx no contiene imagenes embebidas para procesar.",
-            )
         with transaction.atomic():
+            process_run = ProcessRun.objects.create(
+                original_filename=uploaded_file.name,
+                status=ProcessRun.Status.UPLOADED,
+                provider_config_snapshot=_provider_snapshot(),
+            )
+            uploaded_file.seek(0)
+            process_run.source_docx.save(uploaded_file.name, uploaded_file, save=True)
+            process_run.source_docx.open("rb")
+            try:
+                extracted_images = extract_images_in_order(process_run.source_docx)
+                process_run.source_docx.seek(0)
+                extracted_text = extract_text_from_docx(process_run.source_docx)
+                process_run.extracted_text = extracted_text
+                process_run.save(update_fields=["extracted_text", "updated_at"])
+            except (zipfile.BadZipFile, KeyError, ValueError) as error:
+                raise UploadValidationError(
+                    code="invalid_docx",
+                    message="El archivo .docx no es valido o esta corrupto.",
+                    details={"reason": str(error)},
+                ) from error
+            finally:
+                process_run.source_docx.close()
+            if not extracted_images:
+                raise UploadValidationError(
+                    code="docx_no_images",
+                    message="El archivo .docx no contiene imagenes embebidas para procesar.",
+                )
             for extracted in extracted_images:
                 filename = _build_image_filename(
                     process_run.id, extracted.sequence_index, extracted.source_name
@@ -60,12 +64,16 @@ def create_process_run_from_upload(uploaded_file):
                 source_image.image_file.save(
                     filename, ContentFile(extracted.binary), save=True
                 )
+                created_image_paths.append(source_image.image_file.name)
             process_run.total_images = len(extracted_images)
             process_run.save(update_fields=["total_images", "updated_at"])
         return process_run
     except Exception:
-        process_run.source_docx.delete(save=False)
-        process_run.delete()
+        if process_run is not None:
+            for image_path in created_image_paths:
+                process_run.source_docx.storage.delete(image_path)
+            process_run.source_docx.delete(save=False)
+            process_run.delete()
         raise
 
 
@@ -84,3 +92,35 @@ def _build_image_filename(process_run_id, sequence_index, source_name):
 
 def _provider_snapshot():
     return as_snapshot_dict(get_runtime_config())
+
+
+def _validate_uploaded_docx(uploaded_file):
+    max_size = int(getattr(settings, "DOCX_MAX_UPLOAD_BYTES", 10 * 1024 * 1024))
+    if getattr(uploaded_file, "size", 0) > max_size:
+        raise UploadValidationError(
+            code="file_too_large",
+            message="El archivo .docx excede el tamano maximo permitido.",
+            details={"max_bytes": max_size},
+        )
+    if not uploaded_file.name.lower().endswith(".docx"):
+        raise UploadValidationError(
+            code="invalid_extension",
+            message="Solo se permiten archivos .docx.",
+        )
+    uploaded_file.seek(0)
+    signature = uploaded_file.read(4)
+    uploaded_file.seek(0)
+    if signature != b"PK\x03\x04":
+        raise UploadValidationError(
+            code="invalid_docx",
+            message="El archivo .docx no es valido o esta corrupto.",
+            details={"reason": "Invalid ZIP signature."},
+        )
+    if not zipfile.is_zipfile(uploaded_file):
+        uploaded_file.seek(0)
+        raise UploadValidationError(
+            code="invalid_docx",
+            message="El archivo .docx no es valido o esta corrupto.",
+            details={"reason": "Invalid ZIP container."},
+        )
+    uploaded_file.seek(0)
