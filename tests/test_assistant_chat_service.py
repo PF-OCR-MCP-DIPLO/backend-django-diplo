@@ -1,6 +1,7 @@
-from django.test import SimpleTestCase
+from django.test import TestCase
 
 from apps.api.services.assistant_chat import AssistantChatService
+from apps.api.services.assistant_multiagent import AssistantAgent, AssistantIntent, AssistantPlan
 
 
 class FakeAgent:
@@ -13,7 +14,7 @@ class FakeAgent:
         return self.result
 
 
-class AssistantChatServiceTests(SimpleTestCase):
+class AssistantChatServiceTests(TestCase):
     def test_answer_delegates_to_agent_and_preserves_query_context(self):
         agent = FakeAgent({"reply": "ok", "tool": "query_database", "data": []})
         service = AssistantChatService(agent_factory=lambda: agent)
@@ -56,3 +57,31 @@ class AssistantChatServiceTests(SimpleTestCase):
         self.assertEqual(response["tool"], "none")
         self.assertEqual(response["data"], {})
         self.assertEqual(response["query_context"], {})
+
+    def test_assistant_agent_requests_confirmation_for_sensitive_tools(self):
+        agent = AssistantAgent()
+        agent.intent_agent.infer = lambda *args, **kwargs: AssistantIntent(
+            name="process_job",
+            confidence=0.99,
+            tool_hint="process_job",
+            summary="procesar",
+        )
+        agent.planner_agent.plan = lambda *args, **kwargs: AssistantPlan(
+            tool="process_job",
+            arguments={"job_id": 12},
+            intent_name="process_job",
+            intent_summary="procesar",
+        )
+        agent.tool_agent.execute = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("tool executor should not run before confirmation")
+        )
+
+        response = agent.answer(
+            messages=[{"role": "user", "content": "procesa el job"}],
+            job_id=12,
+            errors=0,
+        )
+
+        self.assertEqual(response["tool"], "process_job")
+        self.assertTrue(response["data"]["requires_confirmation"])
+        self.assertIn("confirmacion", response["message"].lower())

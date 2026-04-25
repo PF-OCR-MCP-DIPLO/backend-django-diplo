@@ -14,6 +14,7 @@ from django.db.models import Avg, Count, Max, Min, Sum
 from django.utils import timezone
 from django.utils.timezone import is_aware
 
+from apps.api.services.shared_tools import upload_document_from_path
 from apps.api.serializers import (
     ExtractionLogSerializer,
     ProcessingSettingsSerializer,
@@ -21,7 +22,7 @@ from apps.api.serializers import (
     ProcessRunListSerializer,
 )
 from apps.api.services.assistant_llm import AssistantTextClient, TextGenerationConfig
-from apps.api.services.shared_tools import upload_document_from_path
+from apps.api.services.tool_risk import get_tool_risk_level, tool_requires_confirmation
 from apps.processing.models import (
     ExtractedDeposit,
     ExtractionLog,
@@ -89,6 +90,16 @@ _RE_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
 def _allow_unsafe_sql_enabled() -> bool:
     return bool(getattr(settings, "ALLOW_UNSAFE_SQL", False))
+
+
+def _confirmation_payload(tool: str, detail: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "detail": detail,
+        "tool": tool,
+        "requires_confirmation": True,
+        "risk_level": get_tool_risk_level(tool),
+        "arguments": arguments or {},
+    }
 
 
 @dataclass(frozen=True)
@@ -1720,13 +1731,19 @@ class ToolExecutionAgent:
                 return {"detail": str(exc)}
 
         if plan.tool == "list_available_tools":
-            return sorted(tool for tool in _ALLOWED_TOOLS if tool != "none")
+            return [
+                {"tool": tool, "risk_level": get_tool_risk_level(tool)}
+                for tool in sorted(tool for tool in _ALLOWED_TOOLS if tool != "none")
+            ]
 
         if plan.tool in {"explain_capabilities", "help"}:
             return {
                 "title": "Puedo ayudarte con esto",
                 "capabilities": _CAPABILITIES,
-                "tools": sorted(tool for tool in _ALLOWED_TOOLS if tool != "none"),
+                "tools": [
+                    {"tool": tool, "risk_level": get_tool_risk_level(tool)}
+                    for tool in sorted(tool for tool in _ALLOWED_TOOLS if tool != "none")
+                ],
             }
 
         return {"detail": f"Unsupported tool: {plan.tool}"}
@@ -2408,6 +2425,16 @@ class ResponseAgent:
         if plan.tool == "list_jobs" and isinstance(tool_payload, list):
             return f"Encontré {len(tool_payload)} jobs recientes. Te los muestro en tarjetas en la interfaz."
 
+        if plan.tool == "list_available_tools" and isinstance(tool_payload, list):
+            tools = [
+                item.get("tool", str(item))
+                for item in tool_payload
+                if isinstance(item, dict)
+            ]
+            if tools:
+                return "Estas son las herramientas disponibles: " + ", ".join(tools)
+            return "Estas son las herramientas disponibles."
+
         if plan.tool == "describe_database_schema" and isinstance(tool_payload, dict):
             sources = (
                 tool_payload.get("sources")
@@ -2444,6 +2471,12 @@ class ResponseAgent:
             meta = tool_payload.get("meta") or {}
             rows_count = meta.get("rows_count", 0)
             return f"Ejecuté la sentencia SQL en modo lectura y obtuve {rows_count} resultado(s)."
+
+        if isinstance(tool_payload, dict) and tool_payload.get("requires_confirmation"):
+            detail = tool_payload.get("detail")
+            if detail:
+                return str(detail)
+            return "La accion solicitada requiere confirmacion explicita."
 
         if plan.tool == "get_completed_records_summary" and isinstance(
             tool_payload, dict
@@ -2639,6 +2672,18 @@ class AssistantAgent:
                 job_id=job_id,
                 errors=errors,
             )
+            if tool_requires_confirmation(plan.tool):
+                return {
+                    "reply": self._confirmation_message(plan.tool, plan.arguments),
+                    "message": self._confirmation_message(plan.tool, plan.arguments),
+                    "tool": plan.tool,
+                    "data": {
+                        "detail": self._confirmation_message(plan.tool, plan.arguments),
+                        "requires_confirmation": True,
+                        "risk_level": get_tool_risk_level(plan.tool),
+                        "arguments": plan.arguments,
+                    },
+                }
             tool_payload = self.tool_agent.execute(plan, job_id=job_id)
             reply = self.response_agent.compose(
                 messages,
@@ -2670,3 +2715,16 @@ class AssistantAgent:
                     "error": str(exc),
                 },
             }
+
+    def _confirmation_message(self, tool: str, arguments: dict[str, Any]) -> str:
+        messages = {
+            "crud_database": "Necesito tu confirmacion para ejecutar cambios en la base de datos.",
+            "update_processing_settings": "Necesito tu confirmacion para actualizar la configuracion.",
+            "process_job": "Necesito tu confirmacion para iniciar el procesamiento de este job.",
+            "export_job_excel": "Necesito tu confirmacion para exportar este job a Excel.",
+            "upload_document": "Necesito tu confirmacion para subir este documento.",
+        }
+        detail = messages.get(tool, "Necesito tu confirmacion para ejecutar esta accion.")
+        if tool == "process_job" and "job_id" in arguments:
+            return f"{detail} Job #{arguments.get('job_id')}."
+        return detail

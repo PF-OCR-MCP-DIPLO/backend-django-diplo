@@ -4,6 +4,7 @@ from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
 
 from apps.api.services.assistant_multiagent import AssistantPlan, ToolExecutionAgent
+from apps.api.services.tool_risk import get_tool_risk_level, tool_requires_confirmation
 from apps.processing.models import (
     ExtractedDeposit,
     ExtractionLog,
@@ -69,6 +70,12 @@ class AssistantToolExecutionTests(TestCase):
             self._execute("get_job_logs")["detail"],
             "job_id is required",
         )
+
+    def test_tool_risk_levels_are_classified(self):
+        self.assertEqual(get_tool_risk_level("query_database"), "read_only")
+        self.assertEqual(get_tool_risk_level("update_processing_settings"), "requires_confirmation")
+        self.assertTrue(tool_requires_confirmation("update_processing_settings"))
+        self.assertEqual(get_tool_risk_level("query_database_sql"), "restricted")
 
     def test_job_tools_return_serialized_payloads(self):
         status_payload = self._execute("get_job_status", job_id=self.process_run.id)
