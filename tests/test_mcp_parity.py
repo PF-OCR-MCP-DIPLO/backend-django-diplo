@@ -7,6 +7,7 @@ from django.test import TestCase, override_settings
 
 from apps.api.services.assistant_chat import AssistantChatService
 from apps.api.services.assistant_multiagent import AssistantPlan, ToolExecutionAgent
+from apps.processing.models import ProcessRun
 from mcp_server import server as mcp_server
 from tests.test_api import PNG_ONE, PNG_TWO, build_docx_with_images
 
@@ -95,6 +96,10 @@ class McpParityTests(TestCase):
         self.assertFalse(envelope["ok"])
         self.assertEqual(envelope["status_code"], 403)
 
+        reprocess_envelope = json.loads(mcp_server.reprocess_failed_sources(1))
+        self.assertFalse(reprocess_envelope["ok"])
+        self.assertEqual(reprocess_envelope["status_code"], 403)
+
     def test_upload_and_status_match_multiagent(self):
         tmp_path = ""
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
@@ -130,6 +135,31 @@ class McpParityTests(TestCase):
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+
+    @override_settings(MCP_ENABLE_MUTATIONS=True)
+    def test_reprocess_failed_tool_matches_multiagent(self):
+        job = ProcessRun.objects.create(
+            original_filename="mcp.docx",
+            status=ProcessRun.Status.COMPLETED_WITH_ERRORS,
+        )
+        payload = {"job_id": job.pk}
+        with patch(
+            "apps.api.services.assistant_multiagent.reprocess_failed_sources"
+        ) as mocked_reprocess:
+            mocked_reprocess.return_value = job
+            with patch(
+                "apps.api.services.assistant_multiagent.ProcessRunDetailSerializer"
+            ) as mocked_serializer:
+                mocked_serializer.return_value.data = {
+                    "id": job.pk,
+                    "status": "completed",
+                }
+                self.assertEqual(
+                    self._mcp_payload(mcp_server.reprocess_failed_sources(**payload)),
+                    self._multiagent_payload(
+                        "reprocess_failed_sources", payload, job_id=job.pk
+                    ),
+                )
 
     @override_settings(MCP_ENABLE_MUTATIONS=True)
     def test_log_alias_returns_same_payload(self):

@@ -12,6 +12,23 @@ from apps.processing.services.settings_service import (
     get_runtime_config,
 )
 
+DOCUMENT_TEXT_SOURCE_NAME = "document_text"
+
+
+def is_generated_text_source(source_image):
+    return (
+        source_image is not None
+        and source_image.sequence_index == 0
+        and source_image.source_name == DOCUMENT_TEXT_SOURCE_NAME
+    )
+
+
+def real_source_images_queryset(process_run):
+    return process_run.source_images.exclude(
+        sequence_index=0,
+        source_name=DOCUMENT_TEXT_SOURCE_NAME,
+    ).exclude(image_file="")
+
 
 def _create_log(process_run, source_image, stage, runtime_config, **kwargs):
     sequence_index = source_image.sequence_index if source_image else 0
@@ -43,12 +60,19 @@ def _build_runtime_snapshot(runtime_config):
     return snapshot
 
 
-def prepare_job_for_processing(process_run):
+def _sync_job_counters(process_run):
+    process_run.total_images = real_source_images_queryset(process_run).count()
+    process_run.total_records = process_run.deposits.count()
+    process_run.save(update_fields=["total_images", "total_records", "updated_at"])
+    return process_run
+
+
+def prepare_job_for_full_processing(process_run):
     runtime_config = get_runtime_config()
     process_run = ProcessRun.objects.get(pk=process_run.pk)
     with transaction.atomic():
         generated_text_images = process_run.source_images.filter(
-            sequence_index=0, source_name="document_text"
+            sequence_index=0, source_name=DOCUMENT_TEXT_SOURCE_NAME
         )
         generated_text_images.delete()
         process_run.deposits.all().delete()
@@ -60,6 +84,7 @@ def prepare_job_for_processing(process_run):
         process_run.started_at = timezone.now()
         process_run.finished_at = None
         process_run.error_message = ""
+        process_run.total_images = real_source_images_queryset(process_run).count()
         process_run.total_records = 0
         process_run.provider_config_snapshot = _build_runtime_snapshot(runtime_config)
         process_run.save(
@@ -68,6 +93,7 @@ def prepare_job_for_processing(process_run):
                 "started_at",
                 "finished_at",
                 "error_message",
+                "total_images",
                 "total_records",
                 "excel_file",
                 "provider_config_snapshot",
@@ -83,9 +109,33 @@ def prepare_job_for_processing(process_run):
     return process_run, runtime_config
 
 
+def prepare_job_for_processing(process_run):
+    return prepare_job_for_full_processing(process_run)
+
+
+def mark_job_failed(job_id, error, runtime_config=None):
+    process_run = ProcessRun.objects.filter(pk=job_id).first()
+    if process_run is None:
+        return None
+    message = str(error)
+    process_run.status = ProcessRun.Status.FAILED
+    process_run.error_message = message
+    process_run.finished_at = timezone.now()
+    process_run.save(update_fields=["status", "error_message", "finished_at", "updated_at"])
+    if runtime_config is not None:
+        _safe_create_log(
+            process_run,
+            None,
+            "job_failed",
+            runtime_config,
+            notes=message,
+            is_error=True,
+        )
+    return process_run
+
+
 def process_prepared_job(process_run, runtime_config):
     supervisor = ProcessingSupervisorAgent()
-    total_records = 0
     fatal_error = ""
     failed_images = 0
     _safe_create_log(
@@ -100,7 +150,7 @@ def process_prepared_job(process_run, runtime_config):
         # Process extracted text from the Word document first
         if process_run.extracted_text.strip():
             try:
-                total_records += supervisor.process_text(
+                supervisor.process_text(
                     process_run,
                     process_run.extracted_text,
                     runtime_config,
@@ -118,9 +168,12 @@ def process_prepared_job(process_run, runtime_config):
                 if not fatal_error:
                     fatal_error = str(error)
 
-        for source_image in process_run.source_images.order_by("sequence_index", "id"):
+        real_images = real_source_images_queryset(process_run).order_by(
+            "sequence_index", "id"
+        )
+        for source_image in real_images:
             try:
-                total_records += supervisor.process_image(
+                supervisor.process_image(
                     process_run,
                     source_image,
                     runtime_config,
@@ -150,10 +203,15 @@ def process_prepared_job(process_run, runtime_config):
                 )
                 if not fatal_error:
                     fatal_error = str(error)
-        final_status = ProcessRun.Status.COMPLETED
-        if failed_images > 0:
+        total_records = process_run.deposits.count()
+        total_images = real_source_images_queryset(process_run).count()
+        if fatal_error and total_records == 0 and failed_images >= total_images:
+            final_status = ProcessRun.Status.FAILED
+        elif fatal_error or failed_images > 0:
             final_status = ProcessRun.Status.COMPLETED_WITH_ERRORS
-        if failed_images == process_run.total_images:
+        else:
+            final_status = ProcessRun.Status.COMPLETED
+        if total_images > 0 and failed_images == total_images and total_records == 0:
             final_status = ProcessRun.Status.FAILED
     except Exception as error:
         fatal_error = str(error)
@@ -167,7 +225,9 @@ def process_prepared_job(process_run, runtime_config):
             is_error=True,
         )
     finally:
-        process_run.total_records = total_records
+        process_run.refresh_from_db()
+        process_run.total_images = real_source_images_queryset(process_run).count()
+        process_run.total_records = process_run.deposits.count()
         process_run.finished_at = timezone.now()
         process_run.status = final_status
         process_run.error_message = fatal_error
@@ -192,5 +252,5 @@ def process_prepared_job(process_run, runtime_config):
 
 
 def process_job(process_run):
-    prepared_job, runtime_config = prepare_job_for_processing(process_run)
+    prepared_job, runtime_config = prepare_job_for_full_processing(process_run)
     return process_prepared_job(prepared_job, runtime_config)

@@ -23,6 +23,24 @@ class JobIdInput(BaseModel):
     job_id: int = Field(ge=1, description="Identifier of the processing job")
 
 
+class ReprocessSourceInput(BaseModel):
+    job_id: int = Field(ge=1, description="Identifier of the processing job")
+    source_image_id: int | None = Field(
+        default=None, ge=1, description="Source image to reprocess"
+    )
+    deposit_id: int | None = Field(
+        default=None, ge=1, description="Deposit whose source image should be reprocessed"
+    )
+
+    @field_validator("deposit_id")
+    @classmethod
+    def validate_target(cls, value, info):
+        source_image_id = info.data.get("source_image_id")
+        if value is None and source_image_id is None:
+            raise ValueError("source_image_id or deposit_id is required")
+        return value
+
+
 class UpdateProcessingSettingsInput(BaseModel):
     ocr_mode: str | None = None
     ocr_provider: str | None = None

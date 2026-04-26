@@ -26,6 +26,7 @@ from apps.processing.services.job_cleanup import delete_job_and_files
 from apps.processing.services.job_runner import start_job_processing
 from apps.processing.services.manual_corrections import (
     apply_deposit_corrections,
+    reprocess_failed_sources,
     reprocess_source_image,
 )
 from apps.processing.services.orchestrator import process_job
@@ -114,20 +115,44 @@ class JobProcessView(APIView):
         job = get_object_or_404(
             ProcessRun.objects.prefetch_related("source_images__deposits"), pk=pk
         )
+        force = str(request.query_params.get("force") or "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         if job.status == ProcessRun.Status.PROCESSING:
             return api_error_response(
                 status_code=status.HTTP_409_CONFLICT,
                 code="job_already_processing",
                 message="Esta ejecucion ya se encuentra en procesamiento.",
             )
-        if job.status in (
-            ProcessRun.Status.COMPLETED,
-            ProcessRun.Status.COMPLETED_WITH_ERRORS,
-        ):
+        if job.status == ProcessRun.Status.COMPLETED and not force:
             serializer = ProcessRunDetailSerializer(job, context={"request": request})
             return Response(serializer.data, status=status.HTTP_200_OK)
+        if job.status == ProcessRun.Status.COMPLETED_WITH_ERRORS and not force:
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_has_partial_errors",
+                message=(
+                    "La ejecucion tiene errores parciales. Usa reprocess-failed "
+                    "o reprocesa una fuente especifica."
+                ),
+                details={
+                    "status": job.status,
+                    "reprocess_failed_url": f"/api/jobs/{job.pk}/reprocess-failed/",
+                },
+            )
         if settings.PROCESS_JOBS_ASYNC:
-            started = start_job_processing(job)
+            try:
+                started = start_job_processing(job, force=force)
+            except RuntimeError as error:
+                if str(error) == "job_already_processing":
+                    return api_error_response(
+                        status_code=status.HTTP_409_CONFLICT,
+                        code="job_already_processing",
+                        message="Esta ejecucion ya se encuentra en procesamiento.",
+                    )
+                raise
             serializer = ProcessRunDetailSerializer(
                 started, context={"request": request}
             )
@@ -139,6 +164,64 @@ class JobProcessView(APIView):
         )
         serializer = ProcessRunDetailSerializer(processed, context={"request": request})
         return Response(serializer.data)
+
+
+class JobReprocessFailedView(APIView):
+    authentication_classes = []
+    permission_classes = [ApiKeyPermission]
+    throttle_scope = "jobs_process"
+
+    def post(self, request, pk):
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related("source_images__deposits"), pk=pk
+        )
+        if job.status == ProcessRun.Status.PROCESSING:
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_already_processing",
+                message="Esta ejecucion ya se encuentra en procesamiento.",
+            )
+        updated_job = reprocess_failed_sources(job)
+        response_serializer = ProcessRunDetailSerializer(
+            updated_job, context={"request": request}
+        )
+        return Response(response_serializer.data)
+
+
+class JobSourceImageReprocessView(APIView):
+    authentication_classes = []
+    permission_classes = [ApiKeyPermission]
+    throttle_scope = "jobs_process"
+
+    def post(self, request, pk, source_image_id):
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related("source_images__deposits"), pk=pk
+        )
+        if job.status == ProcessRun.Status.PROCESSING:
+            return api_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="job_already_processing",
+                message="Esta ejecucion ya se encuentra en procesamiento.",
+            )
+        source_image = job.source_images.filter(pk=source_image_id).first()
+        if source_image is None:
+            return api_error_response(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="source_image_not_found",
+                message="La fuente no pertenece a esta ejecucion.",
+            )
+        try:
+            updated_job = reprocess_source_image(job, source_image)
+        except ValueError as error:
+            return api_error_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="source_image_not_reprocessable",
+                message=str(error),
+            )
+        response_serializer = ProcessRunDetailSerializer(
+            updated_job, context={"request": request}
+        )
+        return Response(response_serializer.data)
 
 
 class JobExportView(APIView):

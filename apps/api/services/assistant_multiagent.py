@@ -59,6 +59,10 @@ from apps.processing.models import (
     SourceImage,
 )
 from apps.processing.services.excel_exporter import export_job_to_excel
+from apps.processing.services.manual_corrections import (
+    reprocess_failed_sources,
+    reprocess_source_image,
+)
 from apps.processing.services.orchestrator import process_job
 from apps.processing.services.settings_service import (
     available_options,
@@ -83,6 +87,8 @@ _ALLOWED_TOOLS = {
     "get_processing_settings_options",
     "update_processing_settings",
     "process_job",
+    "reprocess_failed_sources",
+    "reprocess_source_image",
     "export_job_excel",
     "upload_document",
     "list_available_tools",
@@ -1807,6 +1813,51 @@ class ToolExecutionAgent:
                 "source_images__deposits"
             ).get(pk=processed.pk)
             return ProcessRunDetailSerializer(processed, context={"request": None}).data
+
+        if plan.tool == "reprocess_failed_sources":
+            if not _mutation_tools_enabled():
+                return {
+                    "detail": "reprocess_failed_sources is disabled by server configuration."
+                }
+            if resolved_job_id is None:
+                return {"detail": "job_id is required"}
+            job = ProcessRun.objects.prefetch_related("source_images__deposits").get(
+                pk=resolved_job_id
+            )
+            if job.status == ProcessRun.Status.PROCESSING:
+                return {"detail": "job is already processing", "status": job.status}
+            updated = reprocess_failed_sources(job)
+            return ProcessRunDetailSerializer(updated, context={"request": None}).data
+
+        if plan.tool == "reprocess_source_image":
+            if not _mutation_tools_enabled():
+                return {
+                    "detail": "reprocess_source_image is disabled by server configuration."
+                }
+            if resolved_job_id is None:
+                return {"detail": "job_id is required"}
+            source_image_id = plan.arguments.get("source_image_id")
+            deposit_id = plan.arguments.get("deposit_id")
+            job = ProcessRun.objects.prefetch_related("source_images__deposits").get(
+                pk=resolved_job_id
+            )
+            if job.status == ProcessRun.Status.PROCESSING:
+                return {"detail": "job is already processing", "status": job.status}
+            source_image = None
+            if source_image_id is not None:
+                source_image = job.source_images.filter(pk=source_image_id).first()
+            elif deposit_id is not None:
+                deposit = job.deposits.select_related("source_image").filter(
+                    pk=deposit_id
+                ).first()
+                source_image = deposit.source_image if deposit else None
+            if source_image is None:
+                return {"detail": "source_image_id or deposit_id is invalid"}
+            try:
+                updated = reprocess_source_image(job, source_image)
+            except ValueError as error:
+                return {"detail": str(error)}
+            return ProcessRunDetailSerializer(updated, context={"request": None}).data
 
         if plan.tool == "export_job_excel":
             if not _mutation_tools_enabled():

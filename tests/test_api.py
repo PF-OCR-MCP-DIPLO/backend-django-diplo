@@ -4,13 +4,14 @@ import zipfile
 from unittest.mock import patch
 
 import requests
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
 from apps.processing.models import ExtractionLog, ProcessRun, SourceImage
-from apps.processing.services.job_runner import start_job_processing
+from apps.processing.services.job_runner import _running_jobs, start_job_processing
 from apps.processing.services.settings_service import get_or_create_processing_settings
 
 PNG_ONE = base64.b64decode(
@@ -123,6 +124,7 @@ def build_docx_without_images():
 )
 class DocumentApiTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.docx_bytes = build_docx_with_images(
             {"image1.png": PNG_ONE, "image2.png": PNG_TWO}
@@ -797,7 +799,7 @@ class DocumentApiTests(TestCase):
     def test_process_endpoint_returns_accepted_when_async_enabled(self):
         job_id = self._upload_job()
 
-        def fake_start(job):
+        def fake_start(job, **_kwargs):
             ProcessRun.objects.filter(pk=job.pk).update(
                 status=ProcessRun.Status.PROCESSING
             )
@@ -919,6 +921,63 @@ class DocumentApiTests(TestCase):
         self.assertEqual(second.json()["total_records"], first.json()["total_records"])
         self.assertEqual(third.json()["total_records"], first.json()["total_records"])
 
+    def test_completed_with_errors_process_points_to_partial_reprocess(self):
+        job_id = self._upload_job()
+        ProcessRun.objects.filter(pk=job_id).update(
+            status=ProcessRun.Status.COMPLETED_WITH_ERRORS
+        )
+
+        response = self.client.post(f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev")
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "job_has_partial_errors")
+        self.assertIn("reprocess_failed_url", payload["error"]["details"])
+
+    def test_process_excludes_generated_document_text_from_image_loop(self):
+        job_id = self._upload_job()
+        ProcessRun.objects.filter(pk=job_id).update(
+            extracted_text="Consignacion REF=TXT001 VALOR=1000 FECHA=01/04/2026"
+        )
+
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ) as mocked_ocr,
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                side_effect=[
+                    [
+                        {
+                            "fecha_consignacion": "01/04/2026",
+                            "hora_consignacion": "08:00",
+                            "referencia": "TXT001",
+                            "valor": 1000.0,
+                            "archivo_origen": "document_text",
+                        }
+                    ],
+                    [],
+                    [],
+                ],
+            ),
+        ):
+            response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(mocked_ocr.call_count, 2)
+        self.assertEqual(payload["total_images"], 2)
+        self.assertEqual(
+            SourceImage.objects.filter(
+                process_run_id=job_id, sequence_index=0, source_name="document_text"
+            ).count(),
+            1,
+        )
+
     def test_process_retries_failed_job_without_duplicating_results(self):
         job_id = self._upload_job(filename="retry.docx")
 
@@ -974,6 +1033,119 @@ class DocumentApiTests(TestCase):
         self.assertEqual(job.source_images.count(), 2)
         self.assertEqual(job.total_records, 2)
 
+    def test_reprocess_failed_sources_preserves_valid_results(self):
+        job_id = self._upload_job(filename="partial.docx")
+
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR OK", RuntimeError("OCR temporal")],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[
+                    {
+                        "fecha_consignacion": "01/04/2026",
+                        "hora_consignacion": "10:00",
+                        "referencia": "REF001",
+                        "valor": 150000.0,
+                        "archivo_origen": "image1.png",
+                    }
+                ],
+            ),
+        ):
+            first = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["status"], "completed_with_errors")
+        valid_source = SourceImage.objects.get(process_run_id=job_id, sequence_index=1)
+        failed_source = SourceImage.objects.get(process_run_id=job_id, sequence_index=2)
+        valid_deposit_ids = set(valid_source.deposits.values_list("id", flat=True))
+        self.assertEqual(failed_source.ocr_status, SourceImage.OCRStatus.FAILED)
+
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                return_value="OCR RETRY",
+            ) as mocked_ocr,
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[
+                    {
+                        "fecha_consignacion": "02/04/2026",
+                        "hora_consignacion": "11:00",
+                        "referencia": "REF002",
+                        "valor": 50000.0,
+                        "archivo_origen": "image2.png",
+                    }
+                ],
+            ),
+        ):
+            retry = self.client.post(
+                f"/api/jobs/{job_id}/reprocess-failed/", HTTP_X_API_KEY="dev"
+            )
+
+        self.assertEqual(retry.status_code, 200)
+        self.assertEqual(retry.json()["status"], "completed")
+        self.assertEqual(mocked_ocr.call_count, 1)
+        self.assertEqual(ProcessRun.objects.get(pk=job_id).deposits.count(), 2)
+        self.assertTrue(valid_deposit_ids.issubset(set(valid_source.deposits.values_list("id", flat=True))))
+
+    def test_reprocess_source_image_endpoint_reprocesses_one_source(self):
+        job_id = self._upload_job(filename="source-reprocess.docx")
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["OCR 1", "OCR 2"],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                side_effect=[
+                    [
+                        {
+                            "fecha_consignacion": "01/04/2026",
+                            "hora_consignacion": "10:00",
+                            "referencia": "REF001",
+                            "valor": 150000.0,
+                            "archivo_origen": "image1.png",
+                        }
+                    ],
+                    [],
+                ],
+            ),
+        ):
+            self.client.post(f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev")
+
+        source = SourceImage.objects.get(process_run_id=job_id, sequence_index=1)
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                return_value="OCR SOURCE",
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                return_value=[
+                    {
+                        "fecha_consignacion": "03/04/2026",
+                        "hora_consignacion": "12:00",
+                        "referencia": "REF003",
+                        "valor": 75000.0,
+                        "archivo_origen": "image1.png",
+                    }
+                ],
+            ),
+        ):
+            response = self.client.post(
+                f"/api/jobs/{job_id}/source-images/{source.pk}/reprocess/",
+                HTTP_X_API_KEY="dev",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        refreshed = response.json()["source_images"][0]["deposits"][0]
+        self.assertEqual(refreshed["referencia"], "REF003")
+
     def test_process_conflict_for_processing_job_does_not_start_second_run(self):
         job = ProcessRun.objects.create(
             original_filename="processing.docx", status=ProcessRun.Status.PROCESSING
@@ -1002,6 +1174,33 @@ class DocumentApiTests(TestCase):
         self.assertEqual(started.json()["status"], "completed")
         self.assertEqual(returned.pk, job.pk)
         mocked_thread.assert_not_called()
+
+    @override_settings(PROCESS_JOBS_ASYNC=True, API_KEY="dev")
+    def test_async_runner_marks_failed_and_clears_running_flag_on_exception(self):
+        job_id = self._upload_job(filename="async-fail.docx")
+
+        class ImmediateThread:
+            def __init__(self, target, args, **_kwargs):
+                self.target = target
+                self.args = args
+
+            def start(self):
+                self.target(*self.args)
+
+        with patch(
+            "apps.processing.services.job_runner.process_prepared_job",
+            side_effect=RuntimeError("boom async"),
+        ), patch("apps.processing.services.job_runner.threading.Thread", ImmediateThread):
+            response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+        self.assertEqual(response.status_code, 202)
+
+        job = ProcessRun.objects.get(pk=job_id)
+        self.assertEqual(job.status, ProcessRun.Status.FAILED)
+        self.assertIn("boom async", job.error_message)
+        self.assertIsNotNone(job.finished_at)
+        self.assertNotIn(job_id, _running_jobs)
 
 
 class AssistantChatApiTests(TestCase):

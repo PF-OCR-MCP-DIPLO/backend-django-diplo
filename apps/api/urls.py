@@ -11,6 +11,8 @@ from apps.api.views import (
     JobLogsView,
     JobProcessView,
     JobDepositReprocessView,
+    JobReprocessFailedView,
+    JobSourceImageReprocessView,
     OllamaModelsView,
     ProcessingSettingsOptionsView,
     ProcessingSettingsView,
@@ -35,6 +37,16 @@ urlpatterns = [
     ),
     path("jobs/<int:pk>/logs/", JobLogsView.as_view(), name="job-logs"),
     path("jobs/<int:pk>/process/", JobProcessView.as_view(), name="job-process"),
+    path(
+        "jobs/<int:pk>/reprocess-failed/",
+        JobReprocessFailedView.as_view(),
+        name="job-reprocess-failed",
+    ),
+    path(
+        "jobs/<int:pk>/source-images/<int:source_image_id>/reprocess/",
+        JobSourceImageReprocessView.as_view(),
+        name="job-source-image-reprocess",
+    ),
     path("jobs/<int:pk>/export/", JobExportView.as_view(), name="job-export"),
     path(
         "processing/settings/",

@@ -10,6 +10,8 @@ from apps.api.services.tool_risk import get_tool_risk_level
 ALLOWED_PENDING_ACTION_TOOLS = {
     "crud_database",
     "process_job",
+    "reprocess_failed_sources",
+    "reprocess_source_image",
     "export_job_excel",
     "update_processing_settings",
     "update_deposit_correction",
@@ -24,6 +26,8 @@ def pending_action_label(tool: str) -> str:
     labels = {
         "update_deposit_correction": "Corregir consignación",
         "process_job": "Procesar job",
+        "reprocess_failed_sources": "Reprocesar fallidos",
+        "reprocess_source_image": "Reprocesar fuente",
         "export_job_excel": "Exportar Excel",
         "update_processing_settings": "Actualizar configuración",
         "crud_database": "Modificar base de datos",
@@ -175,6 +179,8 @@ def confirmation_message(tool: str, arguments: dict[str, Any]) -> str:
         "crud_database": "Necesito tu confirmacion para ejecutar cambios en la base de datos.",
         "update_processing_settings": "Necesito tu confirmacion para actualizar la configuracion.",
         "process_job": "Necesito tu confirmacion para iniciar el procesamiento de este job.",
+        "reprocess_failed_sources": "Necesito tu confirmacion para reprocesar las fuentes fallidas de este job.",
+        "reprocess_source_image": "Necesito tu confirmacion para reprocesar esta fuente.",
         "export_job_excel": "Necesito tu confirmacion para exportar este job a Excel.",
         "upload_document": "Necesito tu confirmacion para subir este documento.",
         "update_deposit_correction": "Necesito tu confirmacion para corregir esta fila de consignacion.",
@@ -182,6 +188,10 @@ def confirmation_message(tool: str, arguments: dict[str, Any]) -> str:
     detail = messages.get(tool, "Necesito tu confirmacion para ejecutar esta accion.")
     if tool == "process_job" and "job_id" in arguments:
         return f"{detail} Job #{arguments.get('job_id')}."
+    if tool == "reprocess_failed_sources" and "job_id" in arguments:
+        return f"{detail} Job #{arguments.get('job_id')}."
+    if tool == "reprocess_source_image" and "source_image_id" in arguments:
+        return f"{detail} Fuente #{arguments.get('source_image_id')}."
     if tool == "update_deposit_correction" and "deposit_id" in arguments:
         return f"{detail} Fila #{arguments.get('deposit_id')}."
     return detail

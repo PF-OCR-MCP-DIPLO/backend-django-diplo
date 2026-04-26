@@ -20,6 +20,7 @@ from mcp_server.schemas import (
     AssistantChatInput,
     DepositCorrectionInput,
     JobIdInput,
+    ReprocessSourceInput,
     UpdateProcessingSettingsInput,
     UploadDocumentInput,
 )
@@ -110,6 +111,55 @@ def process_job(job_id: int) -> str:
         )
     args = JobIdInput(job_id=job_id)
     return _run_local_tool("process_job", {"job_id": args.job_id}, job_id=args.job_id)
+
+
+@mcp.tool()
+def reprocess_failed_sources(job_id: int) -> str:
+    """Reprocess only failed source images for an existing job."""
+    if not _mutations_enabled():
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 403,
+                "data": None,
+                "detail": "reprocess_failed_sources is disabled by server configuration.",
+            }
+        )
+    args = JobIdInput(job_id=job_id)
+    return _run_local_tool(
+        "reprocess_failed_sources",
+        {"job_id": args.job_id},
+        job_id=args.job_id,
+    )
+
+
+@mcp.tool()
+def reprocess_source_image(
+    job_id: int,
+    source_image_id: int | None = None,
+    deposit_id: int | None = None,
+) -> str:
+    """Reprocess a source image, or the source image that produced a deposit."""
+    if not _mutations_enabled():
+        return _as_json(
+            {
+                "ok": False,
+                "status_code": 403,
+                "data": None,
+                "detail": "reprocess_source_image is disabled by server configuration.",
+            }
+        )
+    args = ReprocessSourceInput(
+        job_id=job_id,
+        source_image_id=source_image_id,
+        deposit_id=deposit_id,
+    )
+    payload = args.model_dump(exclude_none=True)
+    return _run_local_tool(
+        "reprocess_source_image",
+        payload,
+        job_id=args.job_id,
+    )
 
 
 @mcp.tool()

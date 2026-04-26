@@ -83,6 +83,26 @@ class BackendApiClient:
         )
         return self._handle_response(response)
 
+    def reprocess_failed_sources(self, job_id: int) -> dict[str, Any]:
+        response = requests.post(
+            f"{self.base_url}/jobs/{job_id}/reprocess-failed/",
+            headers=self._headers(),
+            timeout=max(self.timeout, 600),
+        )
+        return self._handle_response(response)
+
+    def reprocess_source_image(
+        self,
+        job_id: int,
+        source_image_id: int,
+    ) -> dict[str, Any]:
+        response = requests.post(
+            f"{self.base_url}/jobs/{job_id}/source-images/{source_image_id}/reprocess/",
+            headers=self._headers(),
+            timeout=max(self.timeout, 600),
+        )
+        return self._handle_response(response)
+
     def get_job_status(self, job_id: int) -> dict[str, Any]:
         response = requests.get(
             f"{self.base_url}/jobs/{job_id}/",

@@ -10,6 +10,10 @@ from apps.processing.models import (
     SourceImage,
 )
 from apps.processing.services.agents import ProcessingSupervisorAgent
+from apps.processing.services.orchestrator import (
+    is_generated_text_source,
+    real_source_images_queryset,
+)
 from apps.processing.services.settings_service import get_runtime_config
 
 
@@ -101,10 +105,14 @@ def _reprocess_log_callback(process_run, source_image, stage, runtime_config, **
 def reprocess_source_image(
     process_run: ProcessRun, source_image: SourceImage
 ) -> ProcessRun:
+    if is_generated_text_source(source_image):
+        raise ValueError("document_text is not a reprocessable image source.")
+
     runtime_config = get_runtime_config()
     supervisor = ProcessingSupervisorAgent()
     with transaction.atomic():
         source_image.deposits.all().delete()
+        source_image.extraction_logs.all().delete()
         source_image.error_message = ""
         source_image.ocr_status = SourceImage.OCRStatus.PENDING
         source_image.save(update_fields=["error_message", "ocr_status", "updated_at"])
@@ -125,17 +133,73 @@ def reprocess_source_image(
             notes=str(error),
             is_error=True,
         )
-        raise
 
-    process_run.total_records = process_run.deposits.count()
-    process_run.save(update_fields=["total_records", "updated_at"])
-    ExtractionLog.objects.create(
-        process_run=process_run,
-        source_image=source_image,
-        sequence_index=source_image.sequence_index,
-        stage="image_reprocessed",
-        notes=f"{records_count} records reprocessed",
-    )
+    else:
+        ExtractionLog.objects.create(
+            process_run=process_run,
+            source_image=source_image,
+            sequence_index=source_image.sequence_index,
+            stage="image_reprocessed",
+            notes=f"{records_count} records reprocessed",
+        )
+
+    _update_job_after_partial_reprocess(process_run)
     return ProcessRun.objects.prefetch_related("source_images__deposits").get(
         pk=process_run.pk
+    )
+
+
+def reprocess_failed_sources(process_run: ProcessRun) -> ProcessRun:
+    failed_sources = list(
+        real_source_images_queryset(process_run)
+        .filter(ocr_status=SourceImage.OCRStatus.FAILED)
+        .order_by("sequence_index", "id")
+    )
+    if not failed_sources:
+        return ProcessRun.objects.prefetch_related("source_images__deposits").get(
+            pk=process_run.pk
+        )
+
+    for source_image in failed_sources:
+        reprocess_source_image(process_run, source_image)
+
+    return ProcessRun.objects.prefetch_related("source_images__deposits").get(
+        pk=process_run.pk
+    )
+
+
+def _update_job_after_partial_reprocess(process_run: ProcessRun) -> None:
+    process_run.refresh_from_db()
+    total_images = real_source_images_queryset(process_run).count()
+    failed_images = (
+        real_source_images_queryset(process_run)
+        .filter(ocr_status=SourceImage.OCRStatus.FAILED)
+        .count()
+    )
+    total_records = process_run.deposits.count()
+    process_run.total_images = total_images
+    process_run.total_records = total_records
+    if failed_images == 0:
+        process_run.status = ProcessRun.Status.COMPLETED
+        process_run.error_message = ""
+    elif total_records > 0 or failed_images < total_images:
+        process_run.status = ProcessRun.Status.COMPLETED_WITH_ERRORS
+        first_failed = (
+            real_source_images_queryset(process_run)
+            .filter(ocr_status=SourceImage.OCRStatus.FAILED)
+            .order_by("sequence_index", "id")
+            .first()
+        )
+        process_run.error_message = first_failed.error_message if first_failed else ""
+    else:
+        process_run.status = ProcessRun.Status.FAILED
+        first_failed = (
+            real_source_images_queryset(process_run)
+            .filter(ocr_status=SourceImage.OCRStatus.FAILED)
+            .order_by("sequence_index", "id")
+            .first()
+        )
+        process_run.error_message = first_failed.error_message if first_failed else ""
+    process_run.save(
+        update_fields=["status", "error_message", "total_images", "total_records", "updated_at"]
     )

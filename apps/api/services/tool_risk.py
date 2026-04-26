@@ -16,6 +16,8 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "get_processing_settings_options": "read_only",
     "update_processing_settings": "requires_confirmation",
     "process_job": "requires_confirmation",
+    "reprocess_failed_sources": "requires_confirmation",
+    "reprocess_source_image": "requires_confirmation",
     "export_job_excel": "requires_confirmation",
     "upload_document": "requires_confirmation",
     "list_available_tools": "read_only",

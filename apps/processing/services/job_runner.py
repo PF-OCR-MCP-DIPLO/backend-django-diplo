@@ -7,6 +7,7 @@ from django.db import close_old_connections
 
 from apps.processing.models import ProcessRun
 from apps.processing.services.orchestrator import (
+    mark_job_failed,
     prepare_job_for_processing,
     process_prepared_job,
 )
@@ -17,14 +18,11 @@ _running_jobs: set[int] = set()
 _running_jobs_lock = threading.Lock()
 
 
-def start_job_processing(process_run: ProcessRun) -> ProcessRun:
+def start_job_processing(process_run: ProcessRun, *, force: bool = False) -> ProcessRun:
     process_run = ProcessRun.objects.get(pk=process_run.pk)
     if process_run.status == ProcessRun.Status.PROCESSING:
         raise RuntimeError("job_already_processing")
-    if process_run.status in (
-        ProcessRun.Status.COMPLETED,
-        ProcessRun.Status.COMPLETED_WITH_ERRORS,
-    ):
+    if process_run.status == ProcessRun.Status.COMPLETED and not force:
         return process_run
 
     with _running_jobs_lock:
@@ -32,9 +30,11 @@ def start_job_processing(process_run: ProcessRun) -> ProcessRun:
             raise RuntimeError("job_already_processing")
         _running_jobs.add(process_run.pk)
 
+    runtime_config = None
     try:
         prepared_job, runtime_config = prepare_job_for_processing(process_run)
-    except Exception:
+    except Exception as error:
+        mark_job_failed(process_run.pk, error, runtime_config)
         with _running_jobs_lock:
             _running_jobs.discard(process_run.pk)
         raise
@@ -54,8 +54,9 @@ def _run_job_in_background(job_id, runtime_config):
     try:
         process_run = ProcessRun.objects.get(pk=job_id)
         process_prepared_job(process_run, runtime_config)
-    except Exception:
+    except Exception as error:
         logger.exception("Background processing failed for job %s", job_id)
+        mark_job_failed(job_id, error, runtime_config)
     finally:
         with _running_jobs_lock:
             _running_jobs.discard(job_id)
