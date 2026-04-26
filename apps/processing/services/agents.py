@@ -24,28 +24,24 @@ class ValidationPersistenceAgent:
     """Agent responsible for validation and persistence of extracted records."""
 
     def run(self, process_run, source_image, records, runtime_config):
+        if not getattr(source_image, "pk", None):
+            raise ValueError(
+                "ValidationPersistenceAgent requires a persisted SourceImage. "
+                "Text sources must not be passed as image sources."
+            )
+
         created_records = 0
         for structured_record in records:
+            referencia = structured_record.get("referencia")
+            valor = structured_record.get("valor")
+            if not referencia or valor in (None, ""):
+                continue
+
             observations, is_current_month = build_record_observations(
                 structured_record.get("fecha_consignacion"),
                 structured_record,
                 runtime_config.extraction_criteria,
             )
-
-            # If source_image is a mock object (for text processing), create a real SourceImage
-            if not hasattr(source_image, "pk") or source_image.pk is None:
-                # Create a special SourceImage for text extraction
-                source_image = SourceImage.objects.create(
-                    process_run=process_run,
-                    sequence_index=getattr(source_image, "sequence_index", 0),
-                    source_name=getattr(source_image, "source_name", "document_text"),
-                    content_hash="",
-                    ocr_status=SourceImage.OCRStatus.PROCESSED,
-                    ocr_raw_text=getattr(source_image, "ocr_raw_text", ""),
-                    ocr_provider=getattr(
-                        source_image, "ocr_provider", "text_extraction"
-                    ),
-                )
 
             ExtractedDeposit.objects.create(
                 process_run=process_run,
@@ -53,8 +49,8 @@ class ValidationPersistenceAgent:
                 sequence_index=source_image.sequence_index,
                 fecha_consignacion=structured_record.get("fecha_consignacion") or "",
                 hora_consignacion=structured_record.get("hora_consignacion") or "",
-                referencia=structured_record["referencia"],
-                valor=structured_record["valor"],
+                referencia=referencia,
+                valor=valor,
                 is_current_month=is_current_month,
                 observations=observations,
                 structured_payload=structured_record,
@@ -117,56 +113,4 @@ class ProcessingSupervisorAgent:
                 "updated_at",
             ]
         )
-        return records_count
-
-    def process_text(self, process_run, extracted_text, runtime_config, log_callback):
-        """Process extracted text directly without OCR."""
-        if not extracted_text.strip():
-            return 0
-
-        # Create a mock source_image for logging purposes
-        class MockSourceImage:
-            def __init__(self):
-                self.sequence_index = 0
-                self.source_name = "document_text"
-                self.ocr_provider = "text_extraction"
-                self.ocr_raw_text = extracted_text
-                self.pk = None  # This will trigger SourceImage creation in ValidationPersistenceAgent
-
-        mock_source_image = MockSourceImage()
-
-        log_callback(
-            process_run,
-            mock_source_image,
-            "text_extracted",
-            runtime_config,
-            provider="docx_parser",
-            raw_text=extracted_text,
-            notes="Text extracted directly from Word document",
-        )
-
-        # Use the structuring agent directly with the extracted text
-        structured_result = self.structuring_agent.run(
-            mock_source_image,
-            extracted_text,
-            runtime_config,
-        )
-
-        log_callback(
-            process_run,
-            mock_source_image,
-            "llm_structured",
-            runtime_config,
-            provider=structured_result["provider"],
-            model=structured_result["model"],
-            raw_payload={"records_count": len(structured_result["records"])},
-        )
-
-        records_count = self.validation_agent.run(
-            process_run,
-            mock_source_image,
-            structured_result["records"],
-            runtime_config,
-        )
-
         return records_count

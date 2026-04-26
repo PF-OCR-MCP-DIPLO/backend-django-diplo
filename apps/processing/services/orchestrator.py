@@ -1,3 +1,5 @@
+import time
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -100,7 +102,7 @@ def prepare_job_for_full_processing(process_run):
                 "updated_at",
             ]
         )
-        process_run.source_images.update(
+        real_source_images_queryset(process_run).update(
             ocr_status=SourceImage.OCRStatus.PENDING,
             ocr_raw_text="",
             error_message="",
@@ -138,46 +140,53 @@ def process_prepared_job(process_run, runtime_config):
     supervisor = ProcessingSupervisorAgent()
     fatal_error = ""
     failed_images = 0
+    ocr_calls = 0
+    llm_calls = 0
     _safe_create_log(
         process_run,
         None,
         "job_started",
         runtime_config,
-        notes="Supervisor multi-agent processing started",
+        raw_payload={
+            "job_id": process_run.pk,
+            "total_images": real_source_images_queryset(process_run).count(),
+            "process_extracted_text": False,
+        },
+        notes=(
+            "Supervisor processing started. extracted_text is retained as "
+            "document context and is not structured by default."
+        ),
     )
     final_status = ProcessRun.Status.FAILED
     try:
-        # Process extracted text from the Word document first
-        if process_run.extracted_text.strip():
-            try:
-                supervisor.process_text(
-                    process_run,
-                    process_run.extracted_text,
-                    runtime_config,
-                    _safe_create_log,
-                )
-            except Exception as error:
-                _safe_create_log(
-                    process_run,
-                    None,
-                    "text_processing_failed",
-                    runtime_config,
-                    notes=str(error),
-                    is_error=True,
-                )
-                if not fatal_error:
-                    fatal_error = str(error)
-
         real_images = real_source_images_queryset(process_run).order_by(
             "sequence_index", "id"
         )
         for source_image in real_images:
+            started_at = time.monotonic()
             try:
                 supervisor.process_image(
                     process_run,
                     source_image,
                     runtime_config,
                     _safe_create_log,
+                )
+                ocr_calls += 1
+                llm_calls += 1
+                _safe_create_log(
+                    process_run,
+                    source_image,
+                    "image_processed",
+                    runtime_config,
+                    provider=source_image.ocr_provider,
+                    model=runtime_config.llm_model,
+                    raw_payload={
+                        "job_id": process_run.pk,
+                        "source_image_id": source_image.pk,
+                        "duration_ms": int((time.monotonic() - started_at) * 1000),
+                        "records_count": source_image.deposits.count(),
+                    },
+                    notes="Image processed successfully",
                 )
             except Exception as error:
                 failed_images += 1
@@ -198,6 +207,11 @@ def process_prepared_job(process_run, runtime_config):
                     runtime_config,
                     provider=source_image.ocr_provider,
                     model=runtime_config.ocr_model,
+                    raw_payload={
+                        "job_id": process_run.pk,
+                        "source_image_id": source_image.pk,
+                        "duration_ms": int((time.monotonic() - started_at) * 1000),
+                    },
                     notes=str(error),
                     is_error=True,
                 )
@@ -233,6 +247,7 @@ def process_prepared_job(process_run, runtime_config):
         process_run.error_message = fatal_error
         process_run.save(
             update_fields=[
+                "total_images",
                 "total_records",
                 "finished_at",
                 "status",
@@ -245,6 +260,15 @@ def process_prepared_job(process_run, runtime_config):
             None,
             "job_finished",
             runtime_config,
+            raw_payload={
+                "job_id": process_run.pk,
+                "status": process_run.status,
+                "total_images": process_run.total_images,
+                "total_records": process_run.total_records,
+                "failed_images": failed_images,
+                "number_of_ocr_calls": ocr_calls,
+                "number_of_llm_calls": llm_calls,
+            },
             notes=f"status={process_run.status}",
             is_error=process_run.status == ProcessRun.Status.FAILED,
         )

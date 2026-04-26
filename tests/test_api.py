@@ -121,6 +121,7 @@ def build_docx_without_images():
     API_KEY="",
     ALLOW_OPEN_API_FOR_DEV=True,
     MCP_ENABLE_MUTATIONS=True,
+    STUB_PROVIDERS=False,
 )
 class DocumentApiTests(TestCase):
     def setUp(self):
@@ -917,7 +918,7 @@ class DocumentApiTests(TestCase):
         job = ProcessRun.objects.get(pk=job_id)
         self.assertEqual(job.deposits.count(), 0)
         self.assertEqual(job.source_images.count(), 2)
-        self.assertEqual(job.extraction_logs.count(), 6)
+        self.assertEqual(job.extraction_logs.count(), 8)
         self.assertEqual(second.json()["total_records"], first.json()["total_records"])
         self.assertEqual(third.json()["total_records"], first.json()["total_records"])
 
@@ -947,20 +948,8 @@ class DocumentApiTests(TestCase):
             ) as mocked_ocr,
             patch(
                 "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
-                side_effect=[
-                    [
-                        {
-                            "fecha_consignacion": "01/04/2026",
-                            "hora_consignacion": "08:00",
-                            "referencia": "TXT001",
-                            "valor": 1000.0,
-                            "archivo_origen": "document_text",
-                        }
-                    ],
-                    [],
-                    [],
-                ],
-            ),
+                side_effect=[[], []],
+            ) as mocked_llm,
         ):
             response = self.client.post(
                 f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
@@ -970,12 +959,16 @@ class DocumentApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(mocked_ocr.call_count, 2)
+        self.assertEqual(mocked_llm.call_count, 2)
         self.assertEqual(payload["total_images"], 2)
         self.assertEqual(
             SourceImage.objects.filter(
                 process_run_id=job_id, sequence_index=0, source_name="document_text"
             ).count(),
-            1,
+            0,
+        )
+        self.assertFalse(
+            SourceImage.objects.filter(process_run_id=job_id, image_file="").exists()
         )
 
     def test_process_retries_failed_job_without_duplicating_results(self):
