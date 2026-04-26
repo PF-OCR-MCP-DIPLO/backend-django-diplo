@@ -22,6 +22,11 @@ from apps.documents.services.upload_service import (
 )
 from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
+from apps.processing.services.diagnostics import (
+    summarize_job_diagnostics,
+    summarize_processing_state,
+    summarize_provider_health,
+)
 from apps.processing.services.job_cleanup import delete_job_and_files
 from apps.processing.services.job_runner import start_job_processing
 from apps.processing.services.manual_corrections import (
@@ -257,6 +262,42 @@ class JobLogsView(APIView):
         )
         serializer = ExtractionLogSerializer(logs, many=True)
         return Response(serializer.data)
+
+
+class JobDiagnosticsView(APIView):
+    authentication_classes = []
+    permission_classes = [ApiKeyPermission]
+
+    def get(self, request, pk):
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related(
+                "source_images__deposits",
+                "source_images__extraction_logs",
+                "extraction_logs",
+            ),
+            pk=pk,
+        )
+        return Response(summarize_job_diagnostics(job))
+
+
+class JobProcessingStateView(APIView):
+    authentication_classes = []
+    permission_classes = [ApiKeyPermission]
+
+    def get(self, request, pk):
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related("source_images", "extraction_logs"),
+            pk=pk,
+        )
+        return Response(summarize_processing_state(job))
+
+
+class ProviderHealthView(APIView):
+    authentication_classes = []
+    permission_classes = [ApiKeyPermission]
+
+    def get(self, request):
+        return Response(summarize_provider_health())
 
 
 class JobDepositsBulkUpdateView(APIView):

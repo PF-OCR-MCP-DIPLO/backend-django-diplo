@@ -20,6 +20,7 @@ class OllamaTextLLMProvider(BaseLLMProvider):
         max_retries=3,
         extraction_criteria=None,
     ):
+        self.last_error = None
         if not text.strip() or "EMPTY OCR RESULT" in text:
             return []
         system_prompt = self._build_initial_prompt(text, extraction_criteria)
@@ -76,7 +77,8 @@ class OllamaTextLLMProvider(BaseLLMProvider):
                         + "\nCorrigelo y responde solo con JSON valido."
                     )
                     continue
-            except requests.exceptions.RequestException:
+            except requests.exceptions.RequestException as error:
+                self.last_error = error
                 time.sleep(settings.LLM_RETRY_DELAY * attempt)
         return []
 

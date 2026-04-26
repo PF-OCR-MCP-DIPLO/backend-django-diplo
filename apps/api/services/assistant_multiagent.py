@@ -1847,9 +1847,11 @@ class ToolExecutionAgent:
             if source_image_id is not None:
                 source_image = job.source_images.filter(pk=source_image_id).first()
             elif deposit_id is not None:
-                deposit = job.deposits.select_related("source_image").filter(
-                    pk=deposit_id
-                ).first()
+                deposit = (
+                    job.deposits.select_related("source_image")
+                    .filter(pk=deposit_id)
+                    .first()
+                )
                 source_image = deposit.source_image if deposit else None
             if source_image is None:
                 return {"detail": "source_image_id or deposit_id is invalid"}

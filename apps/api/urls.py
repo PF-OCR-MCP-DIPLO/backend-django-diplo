@@ -6,14 +6,17 @@ from apps.api.views import (
     HealthView,
     JobDepositsBulkUpdateView,
     JobDetailView,
+    JobDiagnosticsView,
     JobExportView,
     JobListView,
     JobLogsView,
     JobProcessView,
+    JobProcessingStateView,
     JobDepositReprocessView,
     JobReprocessFailedView,
     JobSourceImageReprocessView,
     OllamaModelsView,
+    ProviderHealthView,
     ProcessingSettingsOptionsView,
     ProcessingSettingsView,
 )
@@ -36,6 +39,16 @@ urlpatterns = [
         name="job-deposit-reprocess",
     ),
     path("jobs/<int:pk>/logs/", JobLogsView.as_view(), name="job-logs"),
+    path(
+        "jobs/<int:pk>/diagnostics/",
+        JobDiagnosticsView.as_view(),
+        name="job-diagnostics",
+    ),
+    path(
+        "jobs/<int:pk>/processing-state/",
+        JobProcessingStateView.as_view(),
+        name="job-processing-state",
+    ),
     path("jobs/<int:pk>/process/", JobProcessView.as_view(), name="job-process"),
     path(
         "jobs/<int:pk>/reprocess-failed/",
@@ -62,5 +75,10 @@ urlpatterns = [
         "processing/ollama/models/",
         OllamaModelsView.as_view(),
         name="processing-ollama-models",
+    ),
+    path(
+        "processing/provider-health/",
+        ProviderHealthView.as_view(),
+        name="processing-provider-health",
     ),
 ]

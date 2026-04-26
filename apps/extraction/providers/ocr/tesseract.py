@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from django.conf import settings
 from PIL import Image, ImageFile, ImageFilter, ImageOps
 
 from apps.extraction.providers.ocr.base import BaseOCRProvider
@@ -55,7 +56,23 @@ class TesseractOCRProvider(BaseOCRProvider):
             raise RuntimeError("Image path is not available for tesseract")
         lang = resolve_tesseract_language(model_name)
         command = [binary, image_path, "stdout", "-l", lang, "--oem", "1", "--psm", "6"]
-        completed = subprocess.run(command, check=False, capture_output=True, text=True)
+        timeout_seconds = getattr(
+            self,
+            "timeout_seconds",
+            int(getattr(settings, "TESSERACT_TIMEOUT_SECONDS", 90)),
+        )
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise TimeoutError(
+                f"Tesseract timed out after {timeout_seconds} seconds"
+            ) from error
         if completed.returncode != 0 or not completed.stdout.strip():
             fallback_command = [
                 binary,
@@ -68,9 +85,18 @@ class TesseractOCRProvider(BaseOCRProvider):
                 "--psm",
                 "4",
             ]
-            fallback_completed = subprocess.run(
-                fallback_command, check=False, capture_output=True, text=True
-            )
+            try:
+                fallback_completed = subprocess.run(
+                    fallback_command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise TimeoutError(
+                    f"Tesseract fallback timed out after {timeout_seconds} seconds"
+                ) from error
             if fallback_completed.returncode == 0 and fallback_completed.stdout.strip():
                 completed = fallback_completed
                 command = fallback_command

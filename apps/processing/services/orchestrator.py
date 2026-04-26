@@ -9,6 +9,7 @@ from apps.processing.models import (
     SourceImage,
 )
 from apps.processing.services.agents import ProcessingSupervisorAgent
+from apps.processing.services.diagnostics import record_processing_event, stage_timer
 from apps.processing.services.settings_service import (
     as_snapshot_dict,
     get_runtime_config,
@@ -33,19 +34,20 @@ def real_source_images_queryset(process_run):
 
 
 def _create_log(process_run, source_image, stage, runtime_config, **kwargs):
-    sequence_index = source_image.sequence_index if source_image else 0
-    return ExtractionLog.objects.create(
+    status = kwargs.get("status") or (
+        "failed" if kwargs.get("is_error", False) else "completed"
+    )
+    return record_processing_event(
         process_run=process_run,
         source_image=source_image,
-        sequence_index=sequence_index,
         stage=stage,
-        ocr_mode=runtime_config.ocr_mode,
+        status=status,
+        runtime_config=runtime_config,
         provider=kwargs.get("provider", ""),
         model=kwargs.get("model", ""),
         raw_payload=kwargs.get("raw_payload", {}),
         raw_text=kwargs.get("raw_text", ""),
         notes=kwargs.get("notes", ""),
-        is_error=kwargs.get("is_error", False),
     )
 
 
@@ -72,42 +74,52 @@ def _sync_job_counters(process_run):
 def prepare_job_for_full_processing(process_run):
     runtime_config = get_runtime_config()
     process_run = ProcessRun.objects.get(pk=process_run.pk)
-    with transaction.atomic():
-        generated_text_images = process_run.source_images.filter(
-            sequence_index=0, source_name=DOCUMENT_TEXT_SOURCE_NAME
-        )
-        generated_text_images.delete()
-        process_run.deposits.all().delete()
-        process_run.extraction_logs.all().delete()
-        if process_run.excel_file:
-            process_run.excel_file.delete(save=False)
-            process_run.excel_file = None
-        process_run.status = ProcessRun.Status.PROCESSING
-        process_run.started_at = timezone.now()
-        process_run.finished_at = None
-        process_run.error_message = ""
-        process_run.total_images = real_source_images_queryset(process_run).count()
-        process_run.total_records = 0
-        process_run.provider_config_snapshot = _build_runtime_snapshot(runtime_config)
-        process_run.save(
-            update_fields=[
-                "status",
-                "started_at",
-                "finished_at",
-                "error_message",
-                "total_images",
-                "total_records",
-                "excel_file",
-                "provider_config_snapshot",
-                "updated_at",
-            ]
-        )
-        real_source_images_queryset(process_run).update(
-            ocr_status=SourceImage.OCRStatus.PENDING,
-            ocr_raw_text="",
-            error_message="",
-            ocr_provider=runtime_config.ocr_provider,
-        )
+    with stage_timer(
+        process_run=process_run,
+        stage="job_prepare",
+        runtime_config=runtime_config,
+    ) as event:
+        with transaction.atomic():
+            generated_text_images = process_run.source_images.filter(
+                sequence_index=0, source_name=DOCUMENT_TEXT_SOURCE_NAME
+            )
+            generated_text_images.delete()
+            process_run.deposits.all().delete()
+            process_run.extraction_logs.exclude(stage__startswith="docx_").exclude(
+                stage="source_image_created"
+            ).delete()
+            if process_run.excel_file:
+                process_run.excel_file.delete(save=False)
+                process_run.excel_file = None
+            process_run.status = ProcessRun.Status.PROCESSING
+            process_run.started_at = timezone.now()
+            process_run.finished_at = None
+            process_run.error_message = ""
+            process_run.total_images = real_source_images_queryset(process_run).count()
+            process_run.total_records = 0
+            process_run.provider_config_snapshot = _build_runtime_snapshot(
+                runtime_config
+            )
+            process_run.save(
+                update_fields=[
+                    "status",
+                    "started_at",
+                    "finished_at",
+                    "error_message",
+                    "total_images",
+                    "total_records",
+                    "excel_file",
+                    "provider_config_snapshot",
+                    "updated_at",
+                ]
+            )
+            real_source_images_queryset(process_run).update(
+                ocr_status=SourceImage.OCRStatus.PENDING,
+                ocr_raw_text="",
+                error_message="",
+                ocr_provider=runtime_config.ocr_provider,
+            )
+            event["total_images"] = process_run.total_images
     return process_run, runtime_config
 
 
@@ -123,7 +135,9 @@ def mark_job_failed(job_id, error, runtime_config=None):
     process_run.status = ProcessRun.Status.FAILED
     process_run.error_message = message
     process_run.finished_at = timezone.now()
-    process_run.save(update_fields=["status", "error_message", "finished_at", "updated_at"])
+    process_run.save(
+        update_fields=["status", "error_message", "finished_at", "updated_at"]
+    )
     if runtime_config is not None:
         _safe_create_log(
             process_run,
@@ -142,11 +156,11 @@ def process_prepared_job(process_run, runtime_config):
     failed_images = 0
     ocr_calls = 0
     llm_calls = 0
-    _safe_create_log(
-        process_run,
-        None,
-        "job_started",
-        runtime_config,
+    record_processing_event(
+        process_run=process_run,
+        stage="job_started",
+        status="completed",
+        runtime_config=runtime_config,
         raw_payload={
             "job_id": process_run.pk,
             "total_images": real_source_images_queryset(process_run).count(),
@@ -165,12 +179,20 @@ def process_prepared_job(process_run, runtime_config):
         for source_image in real_images:
             started_at = time.monotonic()
             try:
-                supervisor.process_image(
-                    process_run,
-                    source_image,
-                    runtime_config,
-                    _safe_create_log,
-                )
+                with stage_timer(
+                    process_run=process_run,
+                    source_image=source_image,
+                    stage="image_processing",
+                    runtime_config=runtime_config,
+                    raw_payload={"source_name": source_image.source_name},
+                ) as event:
+                    records_count = supervisor.process_image(
+                        process_run,
+                        source_image,
+                        runtime_config,
+                        _safe_create_log,
+                    )
+                    event["records_count"] = records_count
                 ocr_calls += 1
                 llm_calls += 1
                 _safe_create_log(
@@ -260,6 +282,7 @@ def process_prepared_job(process_run, runtime_config):
             None,
             "job_finished",
             runtime_config,
+            status="completed",
             raw_payload={
                 "job_id": process_run.pk,
                 "status": process_run.status,

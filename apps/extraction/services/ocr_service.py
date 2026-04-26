@@ -96,7 +96,8 @@ def _attempt_payload(attempt: OcrAttempt) -> dict[str, Any]:
         "engine": attempt.engine,
         "provider": attempt.provider,
         "model": attempt.model,
-        "text": attempt.text,
+        "text_chars": len(attempt.text or ""),
+        "text_sample": (attempt.text or "")[:500],
         "score": attempt.score,
         "error": attempt.error,
         "duration_ms": attempt.duration_ms,
@@ -114,6 +115,7 @@ def _remove_temp_path(path):
 
 def _run_tesseract(source_image, runtime_config):
     provider = TesseractOCRProvider()
+    provider.timeout_seconds = runtime_config.request_timeout_seconds
     tess_lang = resolve_tesseract_language(runtime_config.ocr_model)
     processed_path = preprocess_image_for_ocr(
         source_image.image_file, binarize=True, sharpen=True
@@ -212,7 +214,10 @@ def _attempt_result(
 def extract_raw_text(source_image, runtime_config):
     attempts: list[OcrAttempt] = []
     primary_runner = (
-        _run_tesseract if runtime_config.ocr_mode == "tesseract" else _run_vision
+        _run_tesseract
+        if runtime_config.ocr_mode == "tesseract"
+        and not getattr(settings, "STUB_PROVIDERS", False)
+        else _run_vision
     )
     fallback_runner = (
         _run_vision if primary_runner is _run_tesseract else _run_tesseract

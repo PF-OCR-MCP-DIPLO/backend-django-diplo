@@ -918,7 +918,13 @@ class DocumentApiTests(TestCase):
         job = ProcessRun.objects.get(pk=job_id)
         self.assertEqual(job.deposits.count(), 0)
         self.assertEqual(job.source_images.count(), 2)
-        self.assertEqual(job.extraction_logs.count(), 8)
+        self.assertEqual(job.extraction_logs.filter(stage="ocr").count(), 4)
+        self.assertEqual(
+            job.extraction_logs.filter(
+                stage="ocr", raw_payload__status="completed"
+            ).count(),
+            2,
+        )
         self.assertEqual(second.json()["total_records"], first.json()["total_records"])
         self.assertEqual(third.json()["total_records"], first.json()["total_records"])
 
@@ -928,7 +934,9 @@ class DocumentApiTests(TestCase):
             status=ProcessRun.Status.COMPLETED_WITH_ERRORS
         )
 
-        response = self.client.post(f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev")
+        response = self.client.post(
+            f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+        )
 
         self.assertEqual(response.status_code, 409)
         payload = response.json()
@@ -1084,7 +1092,11 @@ class DocumentApiTests(TestCase):
         self.assertEqual(retry.json()["status"], "completed")
         self.assertEqual(mocked_ocr.call_count, 1)
         self.assertEqual(ProcessRun.objects.get(pk=job_id).deposits.count(), 2)
-        self.assertTrue(valid_deposit_ids.issubset(set(valid_source.deposits.values_list("id", flat=True))))
+        self.assertTrue(
+            valid_deposit_ids.issubset(
+                set(valid_source.deposits.values_list("id", flat=True))
+            )
+        )
 
     def test_reprocess_source_image_endpoint_reprocesses_one_source(self):
         job_id = self._upload_job(filename="source-reprocess.docx")
@@ -1180,10 +1192,15 @@ class DocumentApiTests(TestCase):
             def start(self):
                 self.target(*self.args)
 
-        with patch(
-            "apps.processing.services.job_runner.process_prepared_job",
-            side_effect=RuntimeError("boom async"),
-        ), patch("apps.processing.services.job_runner.threading.Thread", ImmediateThread):
+        with (
+            patch(
+                "apps.processing.services.job_runner.process_prepared_job",
+                side_effect=RuntimeError("boom async"),
+            ),
+            patch(
+                "apps.processing.services.job_runner.threading.Thread", ImmediateThread
+            ),
+        ):
             response = self.client.post(
                 f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
             )

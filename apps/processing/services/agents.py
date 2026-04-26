@@ -3,21 +3,57 @@ from apps.extraction.services.ocr_service import extract_raw_text
 from apps.extraction.services.structuring_service import extract_structured_data
 from apps.extraction.services.validators import build_record_observations
 from apps.processing.models import ExtractedDeposit, SourceImage
+from apps.processing.services.diagnostics import stage_timer
 
 
 class OCRAgent:
     """Agent responsible for image validation and OCR extraction."""
 
-    def run(self, source_image, runtime_config):
-        validate_source_image(source_image)
-        return extract_raw_text(source_image, runtime_config)
+    def run(self, process_run, source_image, runtime_config):
+        with stage_timer(
+            process_run=process_run,
+            source_image=source_image,
+            stage="image_validation",
+            runtime_config=runtime_config,
+            provider=runtime_config.ocr_provider,
+            model=runtime_config.ocr_model,
+        ):
+            validate_source_image(source_image)
+        with stage_timer(
+            process_run=process_run,
+            source_image=source_image,
+            stage="ocr",
+            runtime_config=runtime_config,
+            provider=runtime_config.ocr_provider,
+            model=runtime_config.ocr_model,
+        ) as event:
+            result = extract_raw_text(source_image, runtime_config)
+            event["provider"] = result["provider"]
+            event["model"] = result["model"]
+            event["raw_text"] = result["text"]
+            event["raw_text_chars"] = len(result.get("text") or "")
+            event.update(result.get("payload") or {})
+            return result
 
 
 class StructuringAgent:
     """Agent responsible for turning raw OCR text into structured records."""
 
-    def run(self, source_image, raw_text, runtime_config):
-        return extract_structured_data(source_image, raw_text, runtime_config)
+    def run(self, process_run, source_image, raw_text, runtime_config):
+        with stage_timer(
+            process_run=process_run,
+            source_image=source_image,
+            stage="llm_structuring",
+            runtime_config=runtime_config,
+            provider=runtime_config.llm_provider,
+            model=runtime_config.llm_model,
+        ) as event:
+            result = extract_structured_data(source_image, raw_text, runtime_config)
+            event["provider"] = result["provider"]
+            event["model"] = result["model"]
+            event["records_count"] = len(result["records"])
+            event.update(result.get("payload") or {})
+            return result
 
 
 class ValidationPersistenceAgent:
@@ -68,7 +104,7 @@ class ProcessingSupervisorAgent:
         self.validation_agent = validation_agent or ValidationPersistenceAgent()
 
     def process_image(self, process_run, source_image, runtime_config, log_callback):
-        ocr_result = self.ocr_agent.run(source_image, runtime_config)
+        ocr_result = self.ocr_agent.run(process_run, source_image, runtime_config)
         source_image.ocr_raw_text = ocr_result["text"]
         source_image.ocr_provider = ocr_result["provider"]
         log_callback(
@@ -83,6 +119,7 @@ class ProcessingSupervisorAgent:
             notes=f"OCR mode resolved to {ocr_result['mode']}",
         )
         structured_result = self.structuring_agent.run(
+            process_run,
             source_image,
             ocr_result["text"],
             runtime_config,
@@ -96,12 +133,19 @@ class ProcessingSupervisorAgent:
             model=structured_result["model"],
             raw_payload={"records_count": len(structured_result["records"])},
         )
-        records_count = self.validation_agent.run(
-            process_run,
-            source_image,
-            structured_result["records"],
-            runtime_config,
-        )
+        with stage_timer(
+            process_run=process_run,
+            source_image=source_image,
+            stage="validation_persistence",
+            runtime_config=runtime_config,
+        ) as event:
+            records_count = self.validation_agent.run(
+                process_run,
+                source_image,
+                structured_result["records"],
+                runtime_config,
+            )
+            event["records_count"] = records_count
         source_image.ocr_status = SourceImage.OCRStatus.PROCESSED
         source_image.error_message = ""
         source_image.save(

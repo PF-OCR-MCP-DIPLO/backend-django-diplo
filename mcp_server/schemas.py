@@ -29,7 +29,9 @@ class ReprocessSourceInput(BaseModel):
         default=None, ge=1, description="Source image to reprocess"
     )
     deposit_id: int | None = Field(
-        default=None, ge=1, description="Deposit whose source image should be reprocessed"
+        default=None,
+        ge=1,
+        description="Deposit whose source image should be reprocessed",
     )
 
     @field_validator("deposit_id")

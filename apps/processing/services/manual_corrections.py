@@ -10,6 +10,7 @@ from apps.processing.models import (
     SourceImage,
 )
 from apps.processing.services.agents import ProcessingSupervisorAgent
+from apps.processing.services.diagnostics import record_processing_event, stage_timer
 from apps.processing.services.orchestrator import (
     is_generated_text_source,
     real_source_images_queryset,
@@ -85,20 +86,17 @@ def apply_deposit_corrections(process_run: ProcessRun, items: list[dict]) -> Pro
 
 
 def _reprocess_log_callback(process_run, source_image, stage, runtime_config, **kwargs):
-    return ExtractionLog.objects.create(
+    return record_processing_event(
         process_run=process_run,
         source_image=source_image,
-        sequence_index=(
-            getattr(source_image, "sequence_index", 0) if source_image else 0
-        ),
         stage=stage,
-        ocr_mode=runtime_config.ocr_mode,
+        status="failed" if kwargs.get("is_error", False) else "completed",
+        runtime_config=runtime_config,
         provider=kwargs.get("provider", ""),
         model=kwargs.get("model", ""),
         raw_payload=kwargs.get("raw_payload", {}),
         raw_text=kwargs.get("raw_text", ""),
         notes=kwargs.get("notes", ""),
-        is_error=kwargs.get("is_error", False),
     )
 
 
@@ -118,9 +116,16 @@ def reprocess_source_image(
         source_image.save(update_fields=["error_message", "ocr_status", "updated_at"])
 
     try:
-        records_count = supervisor.process_image(
-            process_run, source_image, runtime_config, _reprocess_log_callback
-        )
+        with stage_timer(
+            process_run=process_run,
+            source_image=source_image,
+            stage="image_reprocess",
+            runtime_config=runtime_config,
+        ) as event:
+            records_count = supervisor.process_image(
+                process_run, source_image, runtime_config, _reprocess_log_callback
+            )
+            event["records_count"] = records_count
     except Exception as error:
         source_image.ocr_status = SourceImage.OCRStatus.FAILED
         source_image.error_message = str(error)
@@ -201,5 +206,11 @@ def _update_job_after_partial_reprocess(process_run: ProcessRun) -> None:
         )
         process_run.error_message = first_failed.error_message if first_failed else ""
     process_run.save(
-        update_fields=["status", "error_message", "total_images", "total_records", "updated_at"]
+        update_fields=[
+            "status",
+            "error_message",
+            "total_images",
+            "total_records",
+            "updated_at",
+        ]
     )

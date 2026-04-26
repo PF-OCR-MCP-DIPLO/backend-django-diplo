@@ -203,6 +203,8 @@ OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:e2b")
 OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "320"))
 LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
 LLM_RETRY_DELAY = int(os.environ.get("LLM_RETRY_DELAY", "2"))
+MAX_OCR_CHARS_FOR_LLM = int(os.environ.get("MAX_OCR_CHARS_FOR_LLM", "12000"))
+TESSERACT_TIMEOUT_SECONDS = int(os.environ.get("TESSERACT_TIMEOUT_SECONDS", "90"))
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Diplo OCR/LLM API",
