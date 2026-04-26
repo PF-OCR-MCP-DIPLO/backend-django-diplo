@@ -1,8 +1,7 @@
 import os
-import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from django.conf import settings
 
@@ -56,6 +55,7 @@ def score_ocr_text(text):
     normalized = (text or "").strip().lower()
     if not normalized:
         return 0
+
     import re
 
     score = min(len(normalized) // 20, 10)
@@ -68,9 +68,13 @@ def score_ocr_text(text):
         "valor",
         "fecha",
         "hora",
+        "transaccion",
+        "transacción",
+        "aprobada",
     ):
         if keyword in normalized:
             score += 3
+
     if re.search(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", normalized):
         score += 4
     if re.search(r"\b\d{1,2}:\d{2}\b", normalized):
@@ -113,65 +117,121 @@ def _remove_temp_path(path):
         pass
 
 
+def _safe_timeout(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _tesseract_timeout_seconds(runtime_config) -> int:
+    configured = _safe_timeout(
+        getattr(settings, "TESSERACT_TIMEOUT_SECONDS", 90),
+        90,
+    )
+    requested = _safe_timeout(runtime_config.request_timeout_seconds, configured)
+    return max(5, min(requested, configured))
+
+
+def _vision_timeout_seconds(runtime_config) -> int:
+    requested = _safe_timeout(
+        runtime_config.request_timeout_seconds,
+        _safe_timeout(getattr(settings, "OLLAMA_TIMEOUT", 120), 120),
+    )
+
+    if runtime_config.ocr_mode == "auto":
+        configured = _safe_timeout(
+            getattr(settings, "OLLAMA_AUTO_VISION_TIMEOUT_SECONDS", 45),
+            45,
+        )
+    else:
+        configured = _safe_timeout(
+            getattr(settings, "OLLAMA_VISION_TIMEOUT_SECONDS", 120),
+            120,
+        )
+
+    return max(5, min(requested, configured))
+
+
 def _run_tesseract(source_image, runtime_config):
     provider = TesseractOCRProvider()
-    provider.timeout_seconds = runtime_config.request_timeout_seconds
+    provider.timeout_seconds = _tesseract_timeout_seconds(runtime_config)
+
     tess_lang = resolve_tesseract_language(runtime_config.ocr_model)
     processed_path = preprocess_image_for_ocr(
-        source_image.image_file, binarize=True, sharpen=True
+        source_image.image_file,
+        binarize=True,
+        sharpen=True,
     )
+
     try:
-        with open(processed_path, "rb") as processed_file:
 
-            class _TempImage:
-                path = processed_path
+        class _TempImage:
+            path = processed_path
 
-                def seek(self, *_args, **_kwargs):
-                    return None
+            def seek(self, *_args, **_kwargs):
+                return None
 
-            text = provider.extract_text(
-                _TempImage(),
-                model_name=runtime_config.ocr_model,
-            )
+        text = provider.extract_text(
+            _TempImage(),
+            model_name=runtime_config.ocr_model,
+        )
     finally:
         _remove_temp_path(processed_path)
+
     return {
         "text": text,
         "provider": "tesseract",
         "model": tess_lang,
-        "mode": runtime_config.ocr_mode,
+        "mode": "tesseract",
         "payload": _payload("tesseract", tess_lang, "tesseract", text),
     }
 
 
 def _run_vision(source_image, runtime_config):
     provider, resolved_mode = _get_provider(runtime_config.ocr_provider)
-    processed_path = preprocess_image_for_ocr(source_image.image_file, sharpen=True)
+    processed_path = preprocess_image_for_ocr(
+        source_image.image_file,
+        binarize=False,
+        sharpen=True,
+    )
+
     try:
         with open(processed_path, "rb") as processed_file:
             text = provider.extract_text(
                 processed_file,
                 model_name=runtime_config.ocr_model,
-                timeout_seconds=runtime_config.request_timeout_seconds,
+                timeout_seconds=_vision_timeout_seconds(runtime_config),
             )
     finally:
         _remove_temp_path(processed_path)
+
+    payload = _payload(
+        runtime_config.ocr_provider,
+        runtime_config.ocr_model,
+        resolved_mode,
+        text,
+    )
+    provider_error = getattr(provider, "last_error", None)
+    if provider_error is not None:
+        payload["provider_error_class"] = provider_error.__class__.__name__
+        payload["provider_error_message"] = str(provider_error)[:500]
+
     return {
         "text": text,
         "provider": runtime_config.ocr_provider,
         "model": runtime_config.ocr_model,
         "mode": resolved_mode,
-        "payload": _payload(
-            runtime_config.ocr_provider,
-            runtime_config.ocr_model,
-            resolved_mode,
-            text,
-        ),
+        "payload": payload,
     }
 
 
 def _best_result(*results):
-    return max(results, key=lambda item: score_ocr_text(item.get("text", "")))
+    candidates = [item for item in results if item is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: score_ocr_text(item.get("text", "")))
 
 
 def _attempt_result(
@@ -179,7 +239,7 @@ def _attempt_result(
     engine: str,
     provider: str,
     model: str | None,
-    runner,
+    runner: Callable[[], dict[str, Any]],
 ) -> tuple[dict[str, Any] | None, OcrAttempt]:
     started = time.monotonic()
     try:
@@ -211,70 +271,87 @@ def _attempt_result(
         return None, attempt
 
 
+def _result_with_attempts(
+    selected: dict[str, Any] | None,
+    attempts: list[OcrAttempt],
+    fallback_used: bool,
+) -> dict[str, Any]:
+    if selected is None:
+        errors = [attempt.error for attempt in attempts if attempt.error]
+        detail = "; ".join(errors) if errors else "OCR did not return usable text"
+        raise RuntimeError(detail)
+
+    selected_text = selected.get("text", "")
+    payload = dict(selected.get("payload") or {})
+    payload.update(
+        {
+            "score": score_ocr_text(selected_text),
+            "fallback_used": fallback_used,
+            "attempts": [_attempt_payload(attempt) for attempt in attempts],
+        }
+    )
+
+    return {
+        "text": selected_text,
+        "provider": selected.get("provider", ""),
+        "model": selected.get("model"),
+        "mode": selected.get("mode", ""),
+        "payload": payload,
+    }
+
+
 def extract_raw_text(source_image, runtime_config):
     attempts: list[OcrAttempt] = []
-    primary_runner = (
-        _run_tesseract
-        if runtime_config.ocr_mode == "tesseract"
-        and not getattr(settings, "STUB_PROVIDERS", False)
-        else _run_vision
-    )
-    fallback_runner = (
-        _run_vision if primary_runner is _run_tesseract else _run_tesseract
-    )
-    primary_result, primary_attempt = _attempt_result(
-        engine=runtime_config.ocr_mode,
-        provider=(
-            "tesseract"
-            if primary_runner is _run_tesseract
-            else runtime_config.ocr_provider
-        ),
-        model=(
-            resolve_tesseract_language(runtime_config.ocr_model)
-            if primary_runner is _run_tesseract
-            else runtime_config.ocr_model
-        ),
-        runner=lambda: primary_runner(source_image, runtime_config),
-    )
-    attempts.append(primary_attempt)
-    selected = primary_result
     fallback_used = False
-    # Only the explicit auto mode should chain providers. When the user pins
-    # vision or tesseract we keep that choice stable instead of silently
-    # cascading into another engine after a low score.
-    if runtime_config.ocr_mode == "auto":
-        fallback_result, fallback_attempt = _attempt_result(
-            engine="vision" if fallback_runner is _run_vision else "tesseract",
-            provider=(
-                runtime_config.ocr_provider
-                if fallback_runner is _run_vision
-                else "tesseract"
-            ),
-            model=(
-                runtime_config.ocr_model
-                if fallback_runner is _run_vision
-                else resolve_tesseract_language(runtime_config.ocr_model)
-            ),
-            runner=lambda: fallback_runner(source_image, runtime_config),
+
+    use_stub = bool(getattr(settings, "STUB_PROVIDERS", False))
+    accept_score = _safe_timeout(getattr(settings, "AUTO_OCR_ACCEPT_SCORE", 8), 8)
+
+    # Critical fix:
+    # - auto must not start with vision, because vision can block on thinking models.
+    # - auto starts with Tesseract and only calls vision if Tesseract is weak/fails.
+    if runtime_config.ocr_mode == "tesseract" and not use_stub:
+        result, attempt = _attempt_result(
+            engine="tesseract",
+            provider="tesseract",
+            model=resolve_tesseract_language(runtime_config.ocr_model),
+            runner=lambda: _run_tesseract(source_image, runtime_config),
         )
-        attempts.append(fallback_attempt)
-        if fallback_result is not None:
+        attempts.append(attempt)
+        return _result_with_attempts(result, attempts, fallback_used=False)
+
+    if runtime_config.ocr_mode == "vision" or use_stub:
+        result, attempt = _attempt_result(
+            engine="vision",
+            provider=runtime_config.ocr_provider,
+            model=runtime_config.ocr_model,
+            runner=lambda: _run_vision(source_image, runtime_config),
+        )
+        attempts.append(attempt)
+        return _result_with_attempts(result, attempts, fallback_used=False)
+
+    if runtime_config.ocr_mode == "auto":
+        tesseract_result, tesseract_attempt = _attempt_result(
+            engine="tesseract",
+            provider="tesseract",
+            model=resolve_tesseract_language(runtime_config.ocr_model),
+            runner=lambda: _run_tesseract(source_image, runtime_config),
+        )
+        attempts.append(tesseract_attempt)
+
+        selected = tesseract_result
+
+        if tesseract_attempt.score < accept_score:
+            vision_result, vision_attempt = _attempt_result(
+                engine="vision",
+                provider=runtime_config.ocr_provider,
+                model=runtime_config.ocr_model,
+                runner=lambda: _run_vision(source_image, runtime_config),
+            )
+            attempts.append(vision_attempt)
             fallback_used = True
-            if selected is None or score_ocr_text(
-                fallback_result.get("text", "")
-            ) > score_ocr_text(selected.get("text", "")):
-                selected = fallback_result
-    if selected is None:
-        raise RuntimeError("All OCR attempts failed")
-    selected_payload = dict(selected)
-    selected_payload["payload"] = {
-        **selected_payload.get("payload", {}),
-        "attempts": [_attempt_payload(item) for item in attempts],
-        "selected_engine": selected_payload.get("mode", runtime_config.ocr_mode),
-        "selected_provider": selected_payload.get("provider", ""),
-        "selected_model": selected_payload.get("model"),
-        "selected_score": score_ocr_text(selected_payload.get("text", "")),
-        "fallback_used": fallback_used,
-        "errors": [item.error for item in attempts if item.error],
-    }
-    return selected_payload
+            selected = _best_result(tesseract_result, vision_result)
+
+        return _result_with_attempts(selected, attempts, fallback_used=fallback_used)
+
+    raise ValueError(f"Unsupported OCR mode: {runtime_config.ocr_mode}")
