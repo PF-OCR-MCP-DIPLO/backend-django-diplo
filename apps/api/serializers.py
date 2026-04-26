@@ -20,6 +20,8 @@ LLM_PROVIDER_VALUES = {"ollama", "openai", "gemini", "deepseek", "anthropic"}
 
 
 class UploadDocumentSerializer(serializers.Serializer):
+    """Valida la carga de un archivo `.docx` antes de crear una corrida."""
+
     file = serializers.FileField()
 
     def validate_file(self, value):
@@ -34,6 +36,8 @@ class UploadDocumentSerializer(serializers.Serializer):
 
 
 class ExtractedDepositSerializer(serializers.ModelSerializer):
+    """Expone una consignación extraída o corregida para la UI y exportación."""
+
     class Meta:
         model = ExtractedDeposit
         fields = [
@@ -51,6 +55,8 @@ class ExtractedDepositSerializer(serializers.ModelSerializer):
 
 
 class SourceImageSerializer(serializers.ModelSerializer):
+    """Representa una imagen fuente del DOCX junto con sus depósitos."""
+
     deposits = ExtractedDepositSerializer(many=True, read_only=True)
     image_file = serializers.FileField(read_only=True)
 
@@ -73,6 +79,8 @@ class SourceImageSerializer(serializers.ModelSerializer):
 
 
 class ProcessRunListSerializer(serializers.ModelSerializer):
+    """Serializer resumido para listados de corridas en historial."""
+
     class Meta:
         model = ProcessRun
         fields = [
@@ -88,6 +96,8 @@ class ProcessRunListSerializer(serializers.ModelSerializer):
 
 
 class ProcessRunDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de una corrida con relaciones anidadas."""
+
     source_images = SourceImageSerializer(many=True, read_only=True)
     source_docx = serializers.FileField(read_only=True)
     excel_file = serializers.FileField(read_only=True)
@@ -113,6 +123,8 @@ class ProcessRunDetailSerializer(serializers.ModelSerializer):
 
 
 class ExtractionLogSerializer(serializers.ModelSerializer):
+    """Serializer de trazas técnicas por etapa de extracción o reproceso."""
+
     source_image_id = serializers.IntegerField(source="source_image.id", read_only=True)
 
     class Meta:
@@ -134,6 +146,12 @@ class ExtractionLogSerializer(serializers.ModelSerializer):
 
 
 class ProcessingSettingsSerializer(serializers.ModelSerializer):
+    """Serializer del singleton de configuración de procesamiento.
+
+    Oculta claves reales al serializar, expone banderas de presencia y valida
+    combinaciones de proveedor/modo según lo que soporta este MVP.
+    """
+
     has_ocr_api_key = serializers.SerializerMethodField(read_only=True)
     has_llm_api_key = serializers.SerializerMethodField(read_only=True)
     has_assistant_api_key = serializers.SerializerMethodField(read_only=True)
@@ -404,3 +422,9 @@ class BulkDepositCorrectionSerializer(serializers.Serializer):
 
 class DepositCorrectionSerializer(BulkDepositCorrectionItemSerializer):
     job_id = serializers.IntegerField(min_value=1)
+
+
+"""Serializers REST del backend de consignaciones.
+
+Transforman modelos y payloads de entrada en contratos estables para la API.
+"""

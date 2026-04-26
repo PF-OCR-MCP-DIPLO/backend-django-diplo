@@ -1,3 +1,5 @@
+"""Proveedor OCR local basado en Tesseract."""
+
 import shutil
 import subprocess
 import tempfile
@@ -12,7 +14,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 def resolve_tesseract_language(model_name):
-    """Map stored `ocr_model` to a Tesseract `-l` value."""
+    """Mapea el modelo OCR almacenado al idioma de Tesseract."""
     name = (model_name or "").strip()
     if not name or ":" in name:
         return "spa"
@@ -20,6 +22,7 @@ def resolve_tesseract_language(model_name):
 
 
 def preprocess_image_for_ocr(image_file, *, binarize=False, sharpen=False):
+    """Prepara la imagen para mejorar la lectura del OCR local."""
     if hasattr(image_file, "open"):
         try:
             image_file.open("rb")
@@ -47,6 +50,8 @@ def preprocess_image_for_ocr(image_file, *, binarize=False, sharpen=False):
 
 
 class TesseractOCRProvider(BaseOCRProvider):
+    """Ejecuta Tesseract con fallback de configuración y timeout."""
+
     def extract_text(self, image_file, model_name="spa"):
         binary = shutil.which("tesseract")
         if not binary:

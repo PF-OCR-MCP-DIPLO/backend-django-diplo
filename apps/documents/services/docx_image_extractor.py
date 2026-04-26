@@ -1,3 +1,9 @@
+"""Extracción de imágenes y texto embebido desde documentos DOCX.
+
+El extractor recorre el paquete OpenXML para reconstruir el orden de aparición
+de las imágenes y el texto base que sirve como contexto de procesamiento.
+"""
+
 import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
@@ -16,12 +22,20 @@ NAMESPACES = {
 
 @dataclass
 class ExtractedImageFile:
+    """Representa una imagen recuperada del DOCX junto a su orden estable."""
+
     sequence_index: int
     source_name: str
     binary: bytes
 
 
 def extract_images_in_order(docx_file):
+    """Recupera las imágenes embebidas del DOCX respetando su secuencia visual.
+
+    Raises:
+        ValueError: Si el documento excede límites de imágenes o contiene
+            referencias no soportadas.
+    """
     docx_file.seek(0)
     if not zipfile.is_zipfile(docx_file):
         raise zipfile.BadZipFile("Uploaded file is not a valid ZIP/DOCX archive.")
@@ -67,7 +81,7 @@ def extract_images_in_order(docx_file):
 
 
 def extract_text_from_docx(docx_file):
-    """Extract text content from a .docx file."""
+    """Extrae texto plano embebido del DOCX como contexto auxiliar."""
     docx_file.seek(0)
     text_content = []
 

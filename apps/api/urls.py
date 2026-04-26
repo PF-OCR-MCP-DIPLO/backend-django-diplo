@@ -1,3 +1,9 @@
+"""Rutas públicas de la API REST del backend.
+
+Agrupa endpoints de carga, procesamiento, exportación, diagnóstico y chat del
+asistente bajo el prefijo `/api/`.
+"""
+
 from django.urls import path
 
 from apps.api.views import (

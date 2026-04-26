@@ -1,7 +1,11 @@
+"""Proveedor LLM determinista para pruebas y demos locales."""
+
 from apps.extraction.providers.llm.base import BaseLLMProvider
 
 
 class StubTextLLMProvider(BaseLLMProvider):
+    """Devuelve una consignación fija sin depender de un modelo externo."""
+
     def extract(
         self,
         text,

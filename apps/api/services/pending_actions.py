@@ -1,3 +1,9 @@
+"""Contratos y validaciones para acciones pendientes del asistente.
+
+El módulo protege operaciones de mutación que requieren confirmación explícita
+antes de ejecutarse sobre el backend.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -23,6 +29,7 @@ PENDING_ACTION_REQUIRED_FIELDS: dict[str, set[str]] = {
 
 
 def pending_action_label(tool: str) -> str:
+    """Devuelve una etiqueta legible para la herramienta pendiente."""
     labels = {
         "update_deposit_correction": "Corregir consignación",
         "process_job": "Procesar job",
@@ -43,6 +50,7 @@ def pending_action_id(payload: dict[str, Any]) -> str:
 def normalize_pending_action(
     pending_action: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
+    """Normaliza y valida una acción pendiente proveniente del asistente."""
     tool = str(pending_action.get("tool") or "").strip()
     if tool not in ALLOWED_PENDING_ACTION_TOOLS:
         return pending_action, "La acción pendiente es inválida."
@@ -79,6 +87,7 @@ def build_pending_action(
     intent_summary: str,
     job_id: int | None = None,
 ) -> dict[str, Any]:
+    """Construye un payload estable para dejar una acción en espera."""
     payload: dict[str, Any] = {
         "tool": tool,
         "label": pending_action_label(tool),
@@ -104,6 +113,7 @@ def build_pending_action(
 def pending_action_requires_clarification(
     tool: str, arguments: dict[str, Any] | None, job_id: int | None
 ) -> str | None:
+    """Indica si faltan datos mínimos para ejecutar una acción pendiente."""
     if tool not in PENDING_ACTION_REQUIRED_FIELDS:
         return None
 
@@ -135,6 +145,7 @@ def pending_action_requires_clarification(
 def validate_pending_action(
     pending_action: dict[str, Any], job_id: int | None
 ) -> str | None:
+    """Verifica si la acción pendiente sigue siendo válida y ejecutable."""
     tool = str(pending_action.get("tool") or "").strip()
     if tool not in ALLOWED_PENDING_ACTION_TOOLS:
         return "La acción pendiente ya no es válida."
@@ -169,12 +180,14 @@ def validate_pending_action(
 
 
 def clear_pending_action(query_context: dict[str, Any]) -> dict[str, Any]:
+    """Elimina la acción pendiente del contexto sin mutar el original."""
     cleaned = dict(query_context)
     cleaned.pop("pending_action", None)
     return cleaned
 
 
 def confirmation_message(tool: str, arguments: dict[str, Any]) -> str:
+    """Construye el mensaje de confirmación mostrado al usuario."""
     messages = {
         "crud_database": "Necesito tu confirmacion para ejecutar cambios en la base de datos.",
         "update_processing_settings": "Necesito tu confirmacion para actualizar la configuracion.",

@@ -12,6 +12,8 @@ from tests.test_api import PNG_ONE, PNG_TWO, build_docx_with_images
 
 
 class PromptHardeningTests(SimpleTestCase):
+    """Verifica que el prompt trate el OCR como dato no confiable."""
+
     def test_ocr_prompt_marks_text_as_untrusted(self):
         provider = OllamaTextLLMProvider()
 
@@ -23,6 +25,8 @@ class PromptHardeningTests(SimpleTestCase):
 
 
 class UploadSecurityTests(TestCase):
+    """Protege límites de tamaño, cantidad y validez de imágenes embebidas."""
+
     @override_settings(DOCX_MAX_UPLOAD_BYTES=32)
     def test_upload_rejects_large_docx(self):
         upload = SimpleUploadedFile(
@@ -66,6 +70,8 @@ class UploadSecurityTests(TestCase):
 
 
 class McpMutationToggleTests(SimpleTestCase):
+    """Comprueba que las mutaciones MCP respeten el interruptor de seguridad."""
+
     @override_settings(MCP_ENABLE_MUTATIONS=False)
     def test_mcp_mutation_tool_returns_controlled_error(self):
         from mcp_server import server as mcp_server

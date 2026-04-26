@@ -1,3 +1,5 @@
+"""Esquemas Pydantic para consignaciones estructuradas por LLM."""
+
 import re
 
 from pydantic import BaseModel, Field, field_validator
@@ -6,6 +8,8 @@ from apps.common.utils.currency import smart_parse_currency
 
 
 class ConsignacionBasica(BaseModel):
+    """Representa una consignación validada por el contrato del extractor."""
+
     fecha_consignacion: str | None = Field(default=None)
     hora_consignacion: str | None = Field(default=None)
     referencia: str
@@ -72,4 +76,6 @@ class ConsignacionBasica(BaseModel):
 
 
 class ListaConsignaciones(BaseModel):
+    """Contenedor principal devuelto por el proveedor de estructuración."""
+
     consignaciones: list[ConsignacionBasica]

@@ -7,6 +7,8 @@ from mcp_server import server
 
 
 class McpContractTests(TestCase):
+    """Protege que las herramientas MCP mantengan un contrato JSON estable."""
+
     def test_all_mcp_tools_return_json_object(self):
         payload = json.loads(server.health_check())
         self.assertIn("ok", payload)

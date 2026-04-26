@@ -1,3 +1,5 @@
+"""Proveedor LLM textual basado en Ollama."""
+
 import json
 import re
 import time
@@ -14,6 +16,7 @@ _THINK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
 
 
 def _strip_markdown_fence(text: str) -> str:
+    """Elimina cercos markdown antes de intentar parsear JSON."""
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
@@ -56,7 +59,7 @@ def _extract_first_json_object(text: str) -> str:
 
 
 def clean_json_response(raw_response: str) -> str:
-    """Clean responses from models that prepend thinking or prose before JSON."""
+    """Limpia texto de respuesta para extraer un JSON utilizable."""
     text = str(raw_response or "").strip()
     if not text:
         return ""
@@ -67,6 +70,8 @@ def clean_json_response(raw_response: str) -> str:
 
 
 class OllamaTextLLMProvider(BaseLLMProvider):
+    """Extrae consignaciones estructuradas desde texto OCR usando Ollama."""
+
     def __init__(self) -> None:
         self.last_error = None
         self.last_response_text = ""
@@ -81,6 +86,7 @@ class OllamaTextLLMProvider(BaseLLMProvider):
         max_retries=3,
         extraction_criteria=None,
     ):
+        """Solicita estructura JSON al modelo y reintenta cuando la salida es inválida."""
         self.last_error = None
         self.last_response_text = ""
         self.last_clean_response_text = ""
@@ -167,6 +173,7 @@ class OllamaTextLLMProvider(BaseLLMProvider):
         return []
 
     def _build_initial_prompt(self, ocr_text, extraction_criteria=None):
+        """Construye el prompt de extracción con criterios y texto no confiable."""
         criteria_lines = []
         if isinstance(extraction_criteria, dict):
             for field in extraction_criteria.get("fields", []):

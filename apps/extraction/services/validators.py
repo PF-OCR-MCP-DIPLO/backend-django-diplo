@@ -1,15 +1,19 @@
+"""Validadores semánticos para observaciones de consignaciones extraídas."""
+
 from datetime import datetime
 
 from django.utils import timezone
 
 
 def _field_value(record, field_name):
+    """Obtiene un campo de un registro potencialmente parcial."""
     if not isinstance(record, dict):
         return None
     return record.get(field_name)
 
 
 def _validate_criteria_rules(record, criteria):
+    """Aplica reglas de negocio de extracción y devuelve observaciones."""
     observations = []
     if not isinstance(criteria, dict):
         return observations
@@ -63,6 +67,7 @@ def _validate_criteria_rules(record, criteria):
 
 
 def build_record_observations(fecha_consignacion, record=None, criteria=None):
+    """Construye observaciones de validación y marca si la fecha pertenece al mes actual."""
     observations = []
     if not fecha_consignacion:
         observations.append("Fecha no identificada")

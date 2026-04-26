@@ -1,7 +1,19 @@
+"""Modelos de persistencia para ejecuciones, fuentes, depósitos y ajustes.
+
+El esquema refleja el ciclo upload -> OCR/LLM -> corrección -> exportación y
+guarda trazabilidad suficiente para auditoría y reproceso parcial.
+"""
+
 from django.db import models
 
 
 class ProcessRun(models.Model):
+    """Unidad principal de trazabilidad del flujo de procesamiento.
+
+    Representa una corrida completa del pipeline, incluyendo documento origen,
+    estado de ejecución, contadores y artefactos generados.
+    """
+
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "Uploaded"
         PROCESSING = "processing", "Processing"
@@ -29,6 +41,11 @@ class ProcessRun(models.Model):
 
 
 class SourceImage(models.Model):
+    """Imagen extraída del DOCX con estado OCR y metadatos asociados.
+
+    Incluye imágenes reales y fuentes técnicas internas usadas para contexto.
+    """
+
     class OCRStatus(models.TextChoices):
         PENDING = "pending", "Pending"
         PROCESSED = "processed", "Processed"
@@ -56,6 +73,12 @@ class SourceImage(models.Model):
 
 
 class ExtractedDeposit(models.Model):
+    """Consignación estructurada derivada de una imagen fuente.
+
+    Mantiene el resultado normalizado que consumen la UI, la exportación Excel
+    y las correcciones manuales.
+    """
+
     process_run = models.ForeignKey(
         ProcessRun, related_name="deposits", on_delete=models.CASCADE
     )
@@ -77,6 +100,12 @@ class ExtractedDeposit(models.Model):
 
 
 class ProcessingSettings(models.Model):
+    """Singleton de configuración para OCR, LLM y asistente.
+
+    El registro concentra credenciales, proveedor activo y criterios de
+    extracción para mantener consistente el runtime del pipeline.
+    """
+
     class OCRMode(models.TextChoices):
         TESSERACT = "tesseract", "Tesseract"
         VISION = "vision", "Vision"
@@ -118,6 +147,12 @@ class ProcessingSettings(models.Model):
 
 
 class ExtractionLog(models.Model):
+    """Evento técnico de extracción, validación o reproceso.
+
+    Sirve como bitácora de diagnóstico para explicar por qué una etapa
+    completó, falló o produjo resultados parciales.
+    """
+
     process_run = models.ForeignKey(
         ProcessRun, related_name="extraction_logs", on_delete=models.CASCADE
     )

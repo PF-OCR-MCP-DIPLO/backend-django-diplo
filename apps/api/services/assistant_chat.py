@@ -1,3 +1,9 @@
+"""Servicio HTTP del chat del asistente.
+
+Normaliza el contexto de consulta y protege el contrato entre la vista REST,
+el agente conversacional y el frontend.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -9,13 +15,14 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_query_context(raw_query_context: Any) -> dict[str, Any]:
+    """Convierte el contexto de consulta recibido desde la API en un dict seguro."""
     if not isinstance(raw_query_context, dict):
         return {}
     return dict(raw_query_context)
 
 
 class AssistantChatService:
-    """Application service for the assistant chat HTTP use case."""
+    """Orquesta la respuesta del asistente para el caso de uso HTTP."""
 
     def __init__(
         self,
@@ -24,6 +31,7 @@ class AssistantChatService:
         self.agent_factory = agent_factory or AssistantAgent
 
     def answer(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Ejecuta el agente y degrada a una respuesta segura si falla."""
         query_context = normalize_query_context(payload.get("query_context"))
         try:
             agent = self.agent_factory()
@@ -64,6 +72,7 @@ class AssistantChatService:
     def _normalize_response(
         self, result: Any, query_context: dict[str, Any]
     ) -> dict[str, Any]:
+        """Uniforma la forma de respuesta esperada por la API y el frontend."""
         if not isinstance(result, dict):
             result = {"reply": str(result), "tool": "none", "data": {}}
         response = dict(result)
@@ -92,6 +101,7 @@ class AssistantChatService:
         *,
         show_debug_details: bool,
     ) -> dict[str, Any]:
+        """Ajusta la respuesta final según la visibilidad de debug configurada."""
         normalized = self._normalize_response(
             response, normalize_query_context(response.get("query_context"))
         )

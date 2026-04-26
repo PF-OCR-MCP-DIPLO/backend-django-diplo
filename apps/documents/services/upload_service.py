@@ -1,3 +1,9 @@
+"""Servicios de carga y descomposición inicial de documentos DOCX.
+
+Transforma un archivo subido en una corrida persistida, extrae texto e imágenes
+y registra trazabilidad para el pipeline posterior.
+"""
+
 import zipfile
 from hashlib import sha256
 from pathlib import Path
@@ -19,6 +25,23 @@ from apps.processing.services.settings_service import (
 
 
 def create_process_run_from_upload(uploaded_file):
+    """Crea una corrida a partir de un DOCX subido por la API.
+
+    Args:
+        uploaded_file: Archivo DOCX recibido por la vista de upload.
+
+    Returns:
+        Instancia de `ProcessRun` persistida con imágenes fuente y texto del
+        documento.
+
+    Side Effects:
+        Escribe el DOCX y las imágenes extraídas en storage, crea filas de
+        `SourceImage` y borra artefactos parciales si ocurre un error.
+
+    Raises:
+        UploadValidationError: Si el archivo no cumple formato, tamaño o
+            contenido esperado.
+    """
     _validate_uploaded_docx(uploaded_file)
     process_run = None
     created_image_paths = []
@@ -107,6 +130,8 @@ def create_process_run_from_upload(uploaded_file):
 
 
 class UploadValidationError(Exception):
+    """Error de dominio para rechazos de upload antes de persistir la corrida."""
+
     def __init__(self, *, code: str, message: str, details: dict | None = None):
         super().__init__(message)
         self.code = code
@@ -120,6 +145,7 @@ def _build_image_filename(process_run_id, sequence_index, source_name):
 
 
 def _validate_uploaded_docx(uploaded_file):
+    """Verifica tamaño, extensión y firma ZIP del DOCX antes de procesarlo."""
     max_size = int(getattr(settings, "DOCX_MAX_UPLOAD_BYTES", 10 * 1024 * 1024))
     if getattr(uploaded_file, "size", 0) > max_size:
         raise UploadValidationError(

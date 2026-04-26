@@ -1,3 +1,5 @@
+"""Permisos de acceso basados en API key compartida."""
+
 from __future__ import annotations
 
 import secrets

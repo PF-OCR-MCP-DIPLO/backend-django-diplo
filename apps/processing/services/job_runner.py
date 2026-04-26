@@ -1,3 +1,5 @@
+"""Arranque síncrono o asíncrono de corridas de procesamiento."""
+
 from __future__ import annotations
 
 import logging
@@ -19,6 +21,7 @@ _running_jobs_lock = threading.Lock()
 
 
 def start_job_processing(process_run: ProcessRun, *, force: bool = False) -> ProcessRun:
+    """Prepara y lanza una corrida en segundo plano si la configuración lo permite."""
     process_run = ProcessRun.objects.get(pk=process_run.pk)
     if process_run.status == ProcessRun.Status.PROCESSING:
         raise RuntimeError("job_already_processing")
@@ -50,6 +53,7 @@ def start_job_processing(process_run: ProcessRun, *, force: bool = False) -> Pro
 
 
 def _run_job_in_background(job_id, runtime_config):
+    """Ejecuta el pipeline en un hilo aislado y limpia el registro de corrida."""
     close_old_connections()
     try:
         process_run = ProcessRun.objects.get(pk=job_id)

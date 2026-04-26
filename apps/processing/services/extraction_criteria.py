@@ -1,3 +1,5 @@
+"""Normalización y validación de criterios de extracción."""
+
 import json
 from copy import deepcopy
 
@@ -63,6 +65,7 @@ DEFAULT_EXTRACTION_CRITERIA = {
 
 
 def default_extraction_criteria():
+    """Devuelve una copia profunda de los criterios base."""
     return deepcopy(DEFAULT_EXTRACTION_CRITERIA)
 
 
@@ -92,6 +95,7 @@ def _normalize_expected_value(value):
 
 
 def normalize_extraction_criteria(value):
+    """Convierte criterios libres en una estructura segura y estable."""
     if isinstance(value, str):
         text = value.strip()
         if not text:

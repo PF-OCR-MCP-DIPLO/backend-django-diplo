@@ -1,3 +1,9 @@
+"""Exportación Excel para corridas procesadas.
+
+El exportador serializa los depósitos en un formato de entrega estable para la
+UI y para descarga directa del usuario.
+"""
+
 from io import BytesIO
 
 from django.core.files.base import ContentFile
@@ -19,6 +25,12 @@ HEADERS = [
 
 
 def export_job_to_excel(process_run):
+    """Genera y persiste el Excel asociado a una corrida procesada.
+
+    Side Effects:
+        Reemplaza el archivo exportado previo, escribe un nuevo blob en storage
+        y actualiza el modelo `ProcessRun`.
+    """
     process_run = ProcessRun.objects.prefetch_related("source_images__deposits").get(
         pk=process_run.pk
     )
@@ -60,6 +72,7 @@ def export_job_to_excel(process_run):
 
 
 def _style_headers(header_row):
+    """Aplica formato visual al encabezado exportado."""
     fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     font = Font(color="FFFFFF", bold=True)
     for cell in header_row:

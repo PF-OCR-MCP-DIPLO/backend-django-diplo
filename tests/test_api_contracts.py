@@ -11,6 +11,8 @@ from apps.api.serializers import UploadDocumentSerializer
 
 
 class ApiKeyPermissionTests(SimpleTestCase):
+    """Protege el contrato de acceso por API key en entorno abierto y cerrado."""
+
     @override_settings(API_KEY="secret", ALLOW_OPEN_API_FOR_DEV=False)
     def test_permission_accepts_matching_header(self):
         request = type("Request", (), {"META": {"HTTP_X_API_KEY": "secret"}})()
@@ -36,6 +38,8 @@ class ApiKeyPermissionTests(SimpleTestCase):
 
 
 class ApiExceptionHandlerTests(SimpleTestCase):
+    """Verifica el sobre de errores uniforme que consume el frontend."""
+
     def test_validation_error_uses_standard_envelope(self):
         response = api_exception_handler(
             exceptions.ValidationError({"file": ["Solo .docx"]}),
@@ -70,6 +74,8 @@ class ApiExceptionHandlerTests(SimpleTestCase):
 
 
 class UploadDocumentSerializerTests(SimpleTestCase):
+    """Valida el contrato de entrada del upload antes de llegar a la vista."""
+
     @override_settings(DOCX_MAX_UPLOAD_BYTES=8)
     def test_rejects_file_larger_than_limit(self):
         serializer = UploadDocumentSerializer(

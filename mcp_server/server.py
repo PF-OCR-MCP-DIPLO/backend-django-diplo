@@ -1,3 +1,9 @@
+"""Servidor MCP para operar el backend Django a través de herramientas.
+
+Expone acciones de lectura y mutación controladas para asistentes o clientes
+MCP que necesitan interactuar con jobs, settings y exportaciones.
+"""
+
 from __future__ import annotations
 
 import json
@@ -29,14 +35,17 @@ mcp = FastMCP("backend-django-diplo")
 
 
 def _mutations_enabled() -> bool:
+    """Indica si el servidor permite operaciones de mutación."""
     return bool(getattr(settings, "MCP_ENABLE_MUTATIONS", False))
 
 
 def _as_json(payload: Any) -> str:
+    """Serializa la respuesta MCP con formato estable."""
     return json.dumps(payload, ensure_ascii=True, indent=2, default=str)
 
 
 def _runtime_error_payload(error: Exception) -> str:
+    """Construye un payload de error uniforme para fallos no controlados."""
     return _as_json(
         {
             "ok": False,
@@ -48,6 +57,7 @@ def _runtime_error_payload(error: Exception) -> str:
 
 
 def _build_assistant_response(payload: dict[str, Any]) -> dict[str, Any]:
+    """Valida la entrada del chat del asistente y ejecuta la respuesta."""
     serializer = AssistantChatSerializer(data=payload)
     if not serializer.is_valid():
         return {
@@ -70,6 +80,7 @@ def _build_assistant_response(payload: dict[str, Any]) -> dict[str, Any]:
 def _run_local_tool(
     tool: str, arguments: dict[str, Any] | None = None, job_id: int | None = None
 ) -> str:
+    """Ejecuta una herramienta interna y la envuelve en el contrato MCP."""
     try:
         payload = execute_tool(tool=tool, arguments=arguments, job_id=job_id)
         return _as_json(
@@ -81,13 +92,13 @@ def _run_local_tool(
 
 @mcp.tool()
 def health_check() -> str:
-    """Check backend service status."""
+    """Comprueba el estado del backend a través de la herramienta interna."""
     return _run_local_tool("health_check")
 
 
 @mcp.tool()
 def upload_document(file_path: str) -> str:
-    """Upload a .docx document and create a processing job."""
+    """Sube un documento DOCX local y crea una corrida de procesamiento."""
     try:
         args = UploadDocumentInput(file_path=file_path)
         payload = upload_document_from_path(args.file_path)
@@ -100,7 +111,7 @@ def upload_document(file_path: str) -> str:
 
 @mcp.tool()
 def process_job(job_id: int) -> str:
-    """Run OCR and extraction pipeline for an existing job."""
+    """Ejecuta OCR y extracción sobre una corrida existente."""
     if not _mutations_enabled():
         return _as_json(
             {
@@ -115,7 +126,7 @@ def process_job(job_id: int) -> str:
 
 @mcp.tool()
 def reprocess_failed_sources(job_id: int) -> str:
-    """Reprocess only failed source images for an existing job."""
+    """Reprocesa solo las fuentes que quedaron fallidas."""
     if not _mutations_enabled():
         return _as_json(
             {
@@ -139,7 +150,7 @@ def reprocess_source_image(
     source_image_id: int | None = None,
     deposit_id: int | None = None,
 ) -> str:
-    """Reprocess a source image, or the source image that produced a deposit."""
+    """Reprocesa una fuente concreta o la fuente asociada a un depósito."""
     if not _mutations_enabled():
         return _as_json(
             {
@@ -164,7 +175,7 @@ def reprocess_source_image(
 
 @mcp.tool()
 def get_job_status(job_id: int) -> str:
-    """Fetch a detailed job status with images and deposits."""
+    """Obtiene el estado detallado de una corrida con relaciones anidadas."""
     args = JobIdInput(job_id=job_id)
     return _run_local_tool(
         "get_job_status", {"job_id": args.job_id}, job_id=args.job_id
@@ -173,26 +184,26 @@ def get_job_status(job_id: int) -> str:
 
 @mcp.tool()
 def list_jobs() -> str:
-    """List processing jobs ordered by creation date."""
+    """Lista las corridas de procesamiento ordenadas por recencia."""
     return _run_local_tool("list_jobs")
 
 
 @mcp.tool()
 def get_job_logs(job_id: int) -> str:
-    """List extraction logs of a processing job."""
+    """Lista los logs de extracción de una corrida."""
     args = JobIdInput(job_id=job_id)
     return _run_local_tool("get_job_logs", {"job_id": args.job_id}, job_id=args.job_id)
 
 
 @mcp.tool()
 def list_job_logs(job_id: int) -> str:
-    """Deprecated alias for get_job_logs (kept for backward compatibility)."""
+    """Alias legado de `get_job_logs` conservado por compatibilidad."""
     return get_job_logs(job_id)
 
 
 @mcp.tool()
 def export_job_excel(job_id: int) -> str:
-    """Generate Excel output for a completed job."""
+    """Genera la exportación Excel de una corrida finalizada."""
     if not _mutations_enabled():
         return _as_json(
             {
@@ -216,7 +227,7 @@ def update_deposit_correction(
     fecha_consignacion: str | None = None,
     hora_consignacion: str | None = None,
 ) -> str:
-    """Correct a single extracted deposit row with confirmation required by backend."""
+    """Corrige una consignación extraída con confirmación requerida."""
     if not _mutations_enabled():
         return _as_json(
             {
@@ -242,13 +253,13 @@ def update_deposit_correction(
 
 @mcp.tool()
 def get_processing_settings() -> str:
-    """Fetch current processing settings."""
+    """Obtiene la configuración de procesamiento activa."""
     return _run_local_tool("get_processing_settings")
 
 
 @mcp.tool()
 def get_processing_settings_options() -> str:
-    """Fetch supported options for processing settings."""
+    """Obtiene las opciones disponibles para la configuración."""
     return _run_local_tool("get_processing_settings_options")
 
 
@@ -259,7 +270,7 @@ def assistant_chat(
     errors: int = 0,
     query_context: dict[str, Any] | None = None,
 ) -> str:
-    """Run the assistant chat pipeline with the same JSON contract as the backend API."""
+    """Ejecuta el flujo de chat del asistente con el mismo contrato que la API."""
     args = AssistantChatInput(
         messages=messages,
         job_id=job_id,
@@ -293,7 +304,7 @@ def update_processing_settings(
     llm_api_key: str | None = None,
     request_timeout_seconds: int | None = None,
 ) -> str:
-    """Patch processing settings with partial updates."""
+    """Aplica un parche parcial sobre la configuración de procesamiento."""
     if not _mutations_enabled():
         return _as_json(
             {
@@ -323,19 +334,19 @@ def update_processing_settings(
 
 @mcp.tool()
 def describe_database_schema() -> str:
-    """Describe allowed sources, fields and query capabilities."""
+    """Describe las fuentes y capacidades de consulta permitidas."""
     return _run_local_tool("describe_database_schema")
 
 
 @mcp.tool()
 def query_database(query: dict[str, Any]) -> str:
-    """Execute a safe structured query over allowed data sources."""
+    """Ejecuta una consulta estructurada segura sobre fuentes permitidas."""
     return _run_local_tool("query_database", {"query": query})
 
 
 @mcp.tool()
 def query_database_sql(sql: str, limit: int = 100) -> str:
-    """Execute a read-only SQL query when enabled by backend settings."""
+    """Ejecuta una consulta SQL de solo lectura cuando está permitida."""
     if not sql.strip().lower().startswith(("select", "with")):
         return _as_json(
             {
@@ -356,7 +367,7 @@ def crud_database(
     limit: int = 30,
     query: dict[str, Any] | None = None,
 ) -> str:
-    """Execute structured CRUD operations over allowed sources."""
+    """Ejecuta operaciones CRUD estructuradas sobre fuentes permitidas."""
     if not _mutations_enabled():
         return _as_json(
             {
@@ -380,7 +391,7 @@ def crud_database(
 
 @mcp.tool()
 def get_last_record_value(job_id: int | None = None) -> str:
-    """Get the most recent extracted record value for a job or latest completed job."""
+    """Obtiene el último valor extraído de un job o del último completado."""
     arguments: dict[str, Any] = {}
     resolved_job_id: int | None = None
     if job_id is not None:
@@ -392,11 +403,12 @@ def get_last_record_value(job_id: int | None = None) -> str:
 
 @mcp.tool()
 def get_completed_records_summary() -> str:
-    """Get totals across completed jobs."""
+    """Obtiene un resumen agregado de registros completados."""
     return _run_local_tool("get_completed_records_summary")
 
 
 def main() -> None:
+    """Arranca el servidor MCP sobre stdio."""
     mcp.run(transport="stdio")
 
 

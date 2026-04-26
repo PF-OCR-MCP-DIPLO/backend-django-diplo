@@ -1,3 +1,9 @@
+"""Orquestación del pipeline de procesamiento de consignaciones.
+
+Este módulo coordina preparación de corridas, ejecución OCR/LLM, registro de
+logs técnicos y consolidación de contadores de estado.
+"""
+
 import time
 
 from django.db import transaction
@@ -19,6 +25,7 @@ DOCUMENT_TEXT_SOURCE_NAME = "document_text"
 
 
 def is_generated_text_source(source_image):
+    """Indica si la fila representa texto extraído del documento y no una imagen real."""
     return (
         source_image is not None
         and source_image.sequence_index == 0
@@ -27,6 +34,11 @@ def is_generated_text_source(source_image):
 
 
 def real_source_images_queryset(process_run):
+    """Devuelve las imágenes realmente procesables del job.
+
+    La fuente `document_text` con `sequence_index=0` se usa como contexto interno
+    y no debe entrar al conteo de imágenes procesables.
+    """
     return process_run.source_images.exclude(
         sequence_index=0,
         source_name=DOCUMENT_TEXT_SOURCE_NAME,
@@ -72,6 +84,7 @@ def _sync_job_counters(process_run):
 
 
 def prepare_job_for_full_processing(process_run):
+    """Reinicia una corrida para reprocesarla de forma completa."""
     runtime_config = get_runtime_config()
     process_run = ProcessRun.objects.get(pk=process_run.pk)
     with stage_timer(
@@ -124,10 +137,12 @@ def prepare_job_for_full_processing(process_run):
 
 
 def prepare_job_for_processing(process_run):
+    """Compatibilidad semántica con el preparador principal del pipeline."""
     return prepare_job_for_full_processing(process_run)
 
 
 def mark_job_failed(job_id, error, runtime_config=None):
+    """Marca una corrida como fallida y persiste el mensaje de error."""
     process_run = ProcessRun.objects.filter(pk=job_id).first()
     if process_run is None:
         return None
@@ -151,6 +166,7 @@ def mark_job_failed(job_id, error, runtime_config=None):
 
 
 def process_prepared_job(process_run, runtime_config):
+    """Ejecuta OCR y estructuración sobre todas las imágenes de una corrida."""
     supervisor = ProcessingSupervisorAgent()
     fatal_error = ""
     failed_images = 0
@@ -301,3 +317,9 @@ def process_prepared_job(process_run, runtime_config):
 def process_job(process_run):
     prepared_job, runtime_config = prepare_job_for_full_processing(process_run)
     return process_prepared_job(prepared_job, runtime_config)
+
+
+"""Orquestación principal del pipeline de procesamiento.
+
+Coordina preparación, ejecución por imagen, conteos, estados finales y trazas.
+"""

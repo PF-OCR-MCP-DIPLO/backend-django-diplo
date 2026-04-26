@@ -1,0 +1,38 @@
+name: Docs
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build MkDocs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install docs tooling
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Build docs
+        run: mkdocs build --strict --site-dir site
+
+      - name: Upload built docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-diplo-final-docs-site
+          path: site

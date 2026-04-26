@@ -1,3 +1,5 @@
+"""Limpieza de jobs y archivos asociados."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -31,6 +33,7 @@ def _delete_files(file_refs: Iterable[tuple[object, str]]) -> None:
 
 
 def delete_job_and_files(job: ProcessRun) -> None:
+    """Elimina una corrida y programa la limpieza de sus blobs persistidos."""
     file_refs = list(_iter_job_files(job))
     job.delete()
     transaction.on_commit(lambda: _delete_files(file_refs))

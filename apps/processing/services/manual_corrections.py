@@ -1,3 +1,9 @@
+"""Servicios de corrección manual y reproceso parcial.
+
+Permiten ajustar depósitos persistidos y volver a ejecutar solo las fuentes
+necesarias sin repetir toda la corrida.
+"""
+
 from __future__ import annotations
 
 from django.db import transaction
@@ -19,10 +25,23 @@ from apps.processing.services.settings_service import get_runtime_config
 
 
 def apply_deposit_correction(process_run: ProcessRun, item: dict) -> ProcessRun:
+    """Compatibilidad de una sola corrección con la API en lote."""
     return apply_deposit_corrections(process_run, [item])
 
 
 def apply_deposit_corrections(process_run: ProcessRun, items: list[dict]) -> ProcessRun:
+    """Persiste correcciones manuales sobre depósitos de una corrida.
+
+    Args:
+        process_run: Corrida propietaria de los depósitos.
+        items: Lista de correcciones validadas por la capa REST.
+
+    Returns:
+        Corrida recargada con relaciones actualizadas.
+
+    Raises:
+        ValueError: Si alguno de los depósitos no pertenece a la corrida.
+    """
     runtime_config = get_runtime_config()
     deposits = {
         deposit.id: deposit
@@ -103,6 +122,7 @@ def _reprocess_log_callback(process_run, source_image, stage, runtime_config, **
 def reprocess_source_image(
     process_run: ProcessRun, source_image: SourceImage
 ) -> ProcessRun:
+    """Reprocesa una única imagen fuente y actualiza el estado del job."""
     if is_generated_text_source(source_image):
         raise ValueError("document_text is not a reprocessable image source.")
 
@@ -155,6 +175,7 @@ def reprocess_source_image(
 
 
 def reprocess_failed_sources(process_run: ProcessRun) -> ProcessRun:
+    """Reprocesa todas las fuentes que terminaron con error."""
     failed_sources = list(
         real_source_images_queryset(process_run)
         .filter(ocr_status=SourceImage.OCRStatus.FAILED)
@@ -174,6 +195,7 @@ def reprocess_failed_sources(process_run: ProcessRun) -> ProcessRun:
 
 
 def _update_job_after_partial_reprocess(process_run: ProcessRun) -> None:
+    """Recalcula contadores y estado de la corrida luego de un reproceso parcial."""
     process_run.refresh_from_db()
     total_images = real_source_images_queryset(process_run).count()
     failed_images = (

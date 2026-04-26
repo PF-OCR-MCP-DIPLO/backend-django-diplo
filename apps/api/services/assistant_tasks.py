@@ -1,3 +1,9 @@
+"""Resolución de tareas y contexto para el asistente.
+
+Convierte mensajes del usuario, contexto del job y herramientas invocadas en
+una tarea de alto nivel que el agente puede ejecutar.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,6 +44,7 @@ def resolve_assistant_task(
     query_context: dict[str, Any] | None,
     tool: str,
 ) -> AssistantTask:
+    """Determina la tarea conversacional a partir del mensaje y el contexto."""
     text = _normalize_text(user_message)
     context = query_context or {}
     has_row_context = any(
@@ -143,6 +150,7 @@ def build_assistant_task_context(
     job_id: int | None,
     query_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    """Construye el contexto enriquecido que usará el agente del asistente."""
     context = query_context or {}
     task_context: dict[str, Any] = {
         "task": task.name,

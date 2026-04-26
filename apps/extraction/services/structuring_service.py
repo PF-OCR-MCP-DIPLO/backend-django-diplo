@@ -1,3 +1,9 @@
+"""Servicio de estructuración con LLM sobre texto OCR.
+
+Convierte texto bruto en consignaciones normalizadas usando el proveedor LLM
+activo y conserva metadatos del prompt y la respuesta.
+"""
+
 import requests
 from django.conf import settings
 
@@ -7,6 +13,7 @@ from apps.processing.services.diagnostics import stable_hash, truncate_debug_tex
 
 
 def get_llm_provider(provider_name):
+    """Resuelve el proveedor LLM configurado o un stub de pruebas."""
     if provider_name == "ollama":
         if getattr(settings, "STUB_PROVIDERS", False):
             return StubTextLLMProvider()
@@ -40,6 +47,12 @@ def _llm_timeout_seconds(runtime_config):
 
 
 def extract_structured_data(source_image, raw_text, runtime_config):
+    """Pide al proveedor LLM que estructure el texto OCR en consignaciones.
+
+    Side Effects:
+        Ejecuta llamadas de red y puede lanzar `TimeoutError` o errores de
+        proveedor si la respuesta no es utilizable.
+    """
     provider = get_llm_provider(runtime_config.llm_provider)
 
     max_ocr_chars = int(getattr(settings, "MAX_OCR_CHARS_FOR_LLM", 12000))

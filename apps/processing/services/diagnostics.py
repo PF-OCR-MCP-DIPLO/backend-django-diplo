@@ -1,3 +1,5 @@
+"""Diagnóstico y trazabilidad del pipeline de procesamiento."""
+
 from __future__ import annotations
 
 import hashlib
@@ -33,6 +35,7 @@ def real_source_images_queryset(process_run: ProcessRun):
 
 
 def truncate_debug_text(text: str | None, max_chars: int = MAX_DEBUG_TEXT) -> str:
+    """Recorta texto técnico para evitar payloads de diagnóstico excesivos."""
     value = text or ""
     if len(value) <= max_chars:
         return value
@@ -107,6 +110,7 @@ def record_processing_event(
     notes: str = "",
     raw_payload: dict[str, Any] | None = None,
 ) -> ExtractionLog | None:
+    """Persiste un evento técnico de pipeline con metadatos útiles para debug."""
     payload = dict(raw_payload or {})
     now = timezone.now()
     event_started_at = started_at or now
@@ -219,6 +223,7 @@ def stage_timer(
     model: str = "",
     raw_payload: dict[str, Any] | None = None,
 ):
+    """Mide una etapa del pipeline y registra éxito o fallo con contexto."""
     started_monotonic = time.monotonic()
     started_at = timezone.now()
     record_processing_event(

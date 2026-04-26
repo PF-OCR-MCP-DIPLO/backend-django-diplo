@@ -1,3 +1,13 @@
+"""Configuración central de Django para la API de procesamiento.
+
+El módulo concentra el contrato de despliegue: variables de entorno,
+seguridad, CORS, API keys, proveedores OCR/LLM y límites operativos.
+
+Nota: contrato inferido por uso. La configuración visible aquí se corresponde
+con el backend actual y con los tests de integración, pero puede requerir
+ajustes si cambian los proveedores o el modelo de despliegue.
+"""
+
 import os
 from pathlib import Path
 from urllib.parse import urlparse

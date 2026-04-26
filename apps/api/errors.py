@@ -1,3 +1,5 @@
+"""Utilidades para normalizar el formato de error de la API."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

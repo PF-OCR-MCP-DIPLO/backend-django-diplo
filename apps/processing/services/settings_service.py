@@ -1,3 +1,5 @@
+"""Acceso, normalización y snapshot de configuración de procesamiento."""
+
 from dataclasses import dataclass
 
 from django.conf import settings
@@ -49,6 +51,7 @@ class RuntimeProcessingConfig:
 
 
 def get_or_create_processing_settings():
+    """Obtiene o crea el singleton de configuración con valores por defecto."""
     defaults = {
         "ocr_mode": ProcessingSettings.OCRMode.VISION,
         "ocr_provider": ProcessingSettings.Provider.OLLAMA,
@@ -68,6 +71,7 @@ def get_or_create_processing_settings():
 
 
 def get_runtime_config():
+    """Construye una vista inmutable de la configuración activa."""
     config = get_or_create_processing_settings()
     return RuntimeProcessingConfig(
         ocr_mode=config.ocr_mode,
@@ -89,6 +93,7 @@ def get_runtime_config():
 
 
 def as_snapshot_dict(runtime_config):
+    """Serializa la configuración runtime en un snapshot apto para auditoría."""
     return {
         "ocr_mode": runtime_config.ocr_mode,
         "ocr_provider": runtime_config.ocr_provider,
@@ -112,6 +117,7 @@ def as_snapshot_dict(runtime_config):
 
 
 def available_options():
+    """Expone catálogos y requisitos de proveedores para el frontend."""
     try:
         ollama_models = list_installed_models()
     except Exception:
@@ -160,4 +166,5 @@ def available_options():
 
 
 def get_ollama_models_snapshot():
+    """Devuelve el snapshot crudo de modelos disponibles en Ollama."""
     return get_available_models()

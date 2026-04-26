@@ -1,3 +1,5 @@
+"""Catálogo de riesgo y confirmación para herramientas del asistente."""
+
 from __future__ import annotations
 
 TOOL_RISK_LEVELS: dict[str, str] = {
@@ -31,8 +33,10 @@ CONFIRMATION_REQUIRED_TOOLS = {
 
 
 def get_tool_risk_level(tool: str) -> str:
+    """Devuelve el nivel de riesgo esperado para una herramienta."""
     return TOOL_RISK_LEVELS.get(tool, "restricted")
 
 
 def tool_requires_confirmation(tool: str) -> bool:
+    """Indica si la herramienta debe pasar por confirmación del usuario."""
     return get_tool_risk_level(tool) == "requires_confirmation"

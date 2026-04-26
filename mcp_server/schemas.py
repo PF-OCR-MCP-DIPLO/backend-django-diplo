@@ -1,3 +1,5 @@
+"""Esquemas Pydantic para entradas de herramientas MCP."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,6 +8,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class UploadDocumentInput(BaseModel):
+    """Entrada para subir documentos desde una ruta local."""
+
     file_path: str = Field(description="Absolute path to the .docx file")
 
     @field_validator("file_path")
@@ -20,10 +24,14 @@ class UploadDocumentInput(BaseModel):
 
 
 class JobIdInput(BaseModel):
+    """Entrada mínima para herramientas que operan sobre un job."""
+
     job_id: int = Field(ge=1, description="Identifier of the processing job")
 
 
 class ReprocessSourceInput(BaseModel):
+    """Entrada para reprocesar una fuente o el origen de un depósito."""
+
     job_id: int = Field(ge=1, description="Identifier of the processing job")
     source_image_id: int | None = Field(
         default=None, ge=1, description="Source image to reprocess"
@@ -44,6 +52,8 @@ class ReprocessSourceInput(BaseModel):
 
 
 class UpdateProcessingSettingsInput(BaseModel):
+    """Entrada parcial para aplicar ajustes de configuración."""
+
     ocr_mode: str | None = None
     ocr_provider: str | None = None
     ocr_model: str | None = None
@@ -64,11 +74,15 @@ class UpdateProcessingSettingsInput(BaseModel):
 
 
 class AssistantChatMessageInput(BaseModel):
+    """Mensaje individual enviado al asistente por MCP."""
+
     role: str
     content: str
 
 
 class AssistantChatInput(BaseModel):
+    """Payload del chat del asistente en el contrato MCP."""
+
     messages: list[AssistantChatMessageInput]
     job_id: int | None = Field(default=None, ge=1)
     errors: int = Field(default=0, ge=0)
@@ -76,6 +90,8 @@ class AssistantChatInput(BaseModel):
 
 
 class DepositCorrectionInput(BaseModel):
+    """Entrada para corregir una consignación desde una herramienta MCP."""
+
     job_id: int = Field(ge=1, description="Identifier of the processing job")
     deposit_id: int = Field(ge=1, description="Identifier of the extracted deposit")
     fecha_consignacion: str | None = None

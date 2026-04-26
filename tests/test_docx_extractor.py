@@ -42,6 +42,8 @@ def build_docx():
 
 
 class DocxExtractorTests(SimpleTestCase):
+    """Protege el contrato de orden de imágenes embebidas dentro del DOCX."""
+
     def test_extract_images_in_document_order(self):
         images = extract_images_in_order(build_docx())
         self.assertEqual([item.sequence_index for item in images], [1, 2])

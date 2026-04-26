@@ -1,9 +1,12 @@
+"""Validaciones mínimas sobre imágenes extraídas del DOCX."""
+
 from django.conf import settings
 
 MIN_IMAGE_BYTES = 32
 
 
 def validate_source_image(source_image):
+    """Comprueba que la imagen sea procesable por el pipeline de OCR."""
     source_image.image_file.open("rb")
     try:
         binary = source_image.image_file.read()
@@ -21,6 +24,7 @@ def validate_source_image(source_image):
 
 
 def _looks_like_supported_image(binary):
+    """Detecta firmas de imagen soportadas sin depender de librerías pesadas."""
     if binary.startswith(b"\x89PNG\r\n\x1a\n"):
         return True
     if binary.startswith(b"\xff\xd8\xff"):

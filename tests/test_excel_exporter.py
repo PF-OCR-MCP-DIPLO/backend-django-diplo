@@ -7,6 +7,8 @@ from apps.processing.services.excel_exporter import export_job_to_excel
 
 
 class ExcelExporterTests(TestCase):
+    """Asegura que la exportación preserve orden y datos visibles en Excel."""
+
     def test_export_keeps_sequence_order(self):
         process_run = ProcessRun.objects.create(
             original_filename="test.docx",

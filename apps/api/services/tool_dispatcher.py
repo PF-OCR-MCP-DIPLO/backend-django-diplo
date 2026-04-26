@@ -1,3 +1,8 @@
+"""Despachador central de herramientas del asistente.
+
+Convierte una intención de alto nivel en ejecución real sobre el backend.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +11,8 @@ from apps.api.services.assistant_multiagent import AssistantPlan, ToolExecutionA
 
 
 class ToolDispatcher:
+    """Encapsula la ejecución de herramientas sobre el agente de planificación."""
+
     def __init__(self, executor: ToolExecutionAgent | None = None) -> None:
         self._executor = executor or ToolExecutionAgent()
 
@@ -34,6 +41,7 @@ def execute_tool(
     arguments: dict[str, Any] | None = None,
     job_id: int | None = None,
 ) -> Any:
+    """Ejecuta una herramienta usando el despachador por defecto."""
     return _DEFAULT_DISPATCHER.execute(
         tool=tool,
         arguments=arguments,

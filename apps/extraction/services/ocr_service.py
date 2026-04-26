@@ -1,3 +1,9 @@
+"""Servicio de OCR con selección de proveedor, scoring y fallback.
+
+Intenta recuperar texto útil desde una imagen procesada y conserva métricas de
+cada intento para diagnóstico y comparación entre motores.
+"""
+
 import os
 import time
 from dataclasses import dataclass, field
@@ -16,6 +22,8 @@ from apps.extraction.providers.ocr.tesseract import (
 
 @dataclass(frozen=True)
 class OcrAttempt:
+    """Registra un intento OCR individual con su score y metadatos."""
+
     engine: str
     provider: str
     model: str | None
@@ -28,6 +36,8 @@ class OcrAttempt:
 
 @dataclass(frozen=True)
 class OcrResult:
+    """Resume el resultado seleccionado tras evaluar todos los intentos OCR."""
+
     selected_text: str
     selected_engine: str
     selected_provider: str
@@ -38,6 +48,7 @@ class OcrResult:
 
 
 def _get_provider(provider_name):
+    """Resuelve el proveedor OCR concreto según la configuración activa."""
     if provider_name == "ollama":
         if getattr(settings, "STUB_PROVIDERS", False):
             return StubVisionOCRProvider(), "vision"
@@ -52,6 +63,7 @@ def _get_provider(provider_name):
 
 
 def score_ocr_text(text):
+    """Calcula una heurística simple de utilidad del texto OCR."""
     normalized = (text or "").strip().lower()
     if not normalized:
         return 0
@@ -155,6 +167,7 @@ def _vision_timeout_seconds(runtime_config) -> int:
 
 
 def _run_tesseract(source_image, runtime_config):
+    """Ejecuta Tesseract sobre una versión preprocesada de la imagen."""
     provider = TesseractOCRProvider()
     provider.timeout_seconds = _tesseract_timeout_seconds(runtime_config)
 
@@ -190,6 +203,7 @@ def _run_tesseract(source_image, runtime_config):
 
 
 def _run_vision(source_image, runtime_config):
+    """Ejecuta OCR mediante un proveedor visión remoto o emulado."""
     provider, resolved_mode = _get_provider(runtime_config.ocr_provider)
     processed_path = preprocess_image_for_ocr(
         source_image.image_file,
@@ -301,6 +315,11 @@ def _result_with_attempts(
 
 
 def extract_raw_text(source_image, runtime_config):
+    """Obtiene texto OCR bruto aplicando fallback entre motores disponibles.
+
+    El resultado conserva todos los intentos para auditoría, pero selecciona la
+    versión con mejor score para alimentar la etapa de estructuración.
+    """
     attempts: list[OcrAttempt] = []
     fallback_used = False
 

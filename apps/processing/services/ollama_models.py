@@ -1,3 +1,5 @@
+"""Consulta y normalización de modelos disponibles en Ollama."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -68,6 +70,7 @@ def _extract_models(payload: object) -> list[OllamaModelInfo]:
 
 
 def list_installed_models(timeout: int | float = 5.0) -> list[str]:
+    """Lista nombres de modelos instalados o devuelve una lista vacía."""
     url = _tags_url_from_ollama_url(getattr(settings, "OLLAMA_URL", ""))
     try:
         response = requests.get(url, timeout=timeout)
@@ -78,6 +81,7 @@ def list_installed_models(timeout: int | float = 5.0) -> list[str]:
 
 
 def get_available_models(timeout: int | float = 5.0) -> dict[str, object]:
+    """Devuelve un snapshot serializable de modelos y estado del proveedor."""
     url = _tags_url_from_ollama_url(getattr(settings, "OLLAMA_URL", ""))
     try:
         response = requests.get(url, timeout=timeout)

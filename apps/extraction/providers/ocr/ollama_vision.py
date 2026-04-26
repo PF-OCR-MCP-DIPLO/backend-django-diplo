@@ -1,3 +1,5 @@
+"""Proveedor OCR visión basado en Ollama."""
+
 import base64
 import re
 
@@ -10,7 +12,7 @@ _THINK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
 
 
 def clean_ollama_text_response(value: str) -> str:
-    """Normalize Ollama responses from thinking models before the OCR text is used."""
+    """Normaliza respuestas de Ollama antes de usarlas como texto OCR."""
     text = str(value or "").strip()
     if not text:
         return ""
@@ -25,11 +27,14 @@ def clean_ollama_text_response(value: str) -> str:
 
 
 class OllamaVisionOCRProvider(BaseOCRProvider):
+    """Ejecuta OCR visión sobre imágenes usando Ollama y conserva errores."""
+
     def __init__(self) -> None:
         self.last_error = None
         self.last_response_text = ""
 
     def build_prompt(self):
+        """Construye el prompt OCR conservador usado para transcribir imágenes."""
         return (
             "Eres un motor OCR para comprobantes y consignaciones bancarias.\n"
             "Tarea: transcribe únicamente el texto visible de la imagen.\n"
@@ -44,6 +49,7 @@ class OllamaVisionOCRProvider(BaseOCRProvider):
         )
 
     def extract_text(self, image_file, model_name=None, timeout_seconds=None):
+        """Envía la imagen a Ollama y devuelve texto limpio para el pipeline."""
         self.last_error = None
         self.last_response_text = ""
 

@@ -1,3 +1,5 @@
+"""Cliente HTTP interno del servidor MCP hacia la API Django."""
+
 from __future__ import annotations
 
 import os
@@ -8,6 +10,8 @@ import requests
 
 
 class BackendApiError(RuntimeError):
+    """Error controlado devuelto por la API backend al operar desde MCP."""
+
     def __init__(self, status_code: int, detail: str, payload: Any | None = None):
         self.status_code = status_code
         self.detail = detail
@@ -16,6 +20,8 @@ class BackendApiError(RuntimeError):
 
 
 class BackendApiClient:
+    """Encapsula las llamadas HTTP que el servidor MCP delega al backend."""
+
     def __init__(self, base_url: str | None = None, api_token: str | None = None):
         env_base = os.getenv("MCP_BACKEND_BASE_URL", "http://127.0.0.1:8000/api")
         self.base_url = (base_url or env_base).rstrip("/")

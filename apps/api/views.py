@@ -1,3 +1,13 @@
+"""Vistas REST del backend de consignaciones.
+
+Cada endpoint coordina validación de entrada, permisos por API key y llamadas a
+servicios de dominio para carga, procesamiento, corrección, exportación y chat.
+
+Nota: contrato inferido por uso. Las vistas reflejan los tests y los clientes
+frontend actuales; si cambian los serializers o el pipeline, esta capa debe
+revisarse en conjunto.
+"""
+
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -43,6 +53,8 @@ from apps.processing.services.settings_service import (
 
 
 class HealthView(APIView):
+    """Endpoint liviano para comprobar que la API responde."""
+
     authentication_classes = []
     permission_classes = []
 
@@ -51,6 +63,17 @@ class HealthView(APIView):
 
 
 class DocumentUploadView(APIView):
+    """Recibe un DOCX, lo valida y crea una corrida de procesamiento.
+
+    Entrada:
+        `multipart/form-data` con el archivo `file`.
+    Salida:
+        Detalle de la corrida creada.
+    Errores relevantes:
+        400 cuando el DOCX no es válido o no cumple restricciones.
+        401 cuando falta `X-API-Key` en entornos que la requieren.
+    """
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
     throttle_scope = "documents_upload"
@@ -76,6 +99,8 @@ class DocumentUploadView(APIView):
 
 
 class JobListView(APIView):
+    """Lista ejecuciones de procesamiento ordenadas por recencia."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -86,6 +111,8 @@ class JobListView(APIView):
 
 
 class JobDetailView(APIView):
+    """Devuelve o elimina una ejecución individual junto con sus relaciones."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -112,6 +139,11 @@ class JobDetailView(APIView):
 
 
 class JobProcessView(APIView):
+    """Inicia o ejecuta una corrida existente según la configuración asíncrona.
+
+    El parámetro `force` permite reejecutar corridas completadas.
+    """
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
     throttle_scope = "jobs_process"
@@ -172,6 +204,8 @@ class JobProcessView(APIView):
 
 
 class JobReprocessFailedView(APIView):
+    """Reprocesa solo las fuentes que quedaron con error."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
     throttle_scope = "jobs_process"
@@ -194,6 +228,8 @@ class JobReprocessFailedView(APIView):
 
 
 class JobSourceImageReprocessView(APIView):
+    """Reprocesa una imagen fuente concreta dentro de una corrida."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
     throttle_scope = "jobs_process"
@@ -230,6 +266,8 @@ class JobSourceImageReprocessView(APIView):
 
 
 class JobExportView(APIView):
+    """Genera o reexpone la exportación Excel de una corrida terminada."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
     throttle_scope = "jobs_export"
@@ -252,6 +290,8 @@ class JobExportView(APIView):
 
 
 class JobLogsView(APIView):
+    """Entrega el historial de logs de extracción asociado a una corrida."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -265,6 +305,8 @@ class JobLogsView(APIView):
 
 
 class JobDiagnosticsView(APIView):
+    """Resume señales de depuración y consistencia de una corrida."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -281,6 +323,8 @@ class JobDiagnosticsView(APIView):
 
 
 class JobProcessingStateView(APIView):
+    """Devuelve un resumen compacto del estado operativo de la corrida."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -293,6 +337,8 @@ class JobProcessingStateView(APIView):
 
 
 class ProviderHealthView(APIView):
+    """Reporta el estado observado de proveedores OCR, LLM y auxiliares."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -301,6 +347,18 @@ class ProviderHealthView(APIView):
 
 
 class JobDepositsBulkUpdateView(APIView):
+    """Aplica correcciones manuales sobre múltiples depósitos.
+
+    Entrada:
+        Payload de corrección validado por `BulkDepositCorrectionSerializer`.
+    Salida:
+        Corrida actualizada con observaciones y payload estructurado ajustado.
+    Errores relevantes:
+        400 si una corrección no es válida o no pertenece a la corrida.
+        409 si la corrida sigue en procesamiento.
+    """
+
+    """Aplica correcciones manuales sobre depósitos extraídos."""
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -336,6 +394,8 @@ class JobDepositsBulkUpdateView(APIView):
 
 
 class JobDepositReprocessView(APIView):
+    """Reprocesa una consignación concreta a partir de su imagen de origen."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -366,6 +426,8 @@ class JobDepositReprocessView(APIView):
 
 
 class ProcessingSettingsView(APIView):
+    """Lee y actualiza la configuración singleton de procesamiento."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
     throttle_scope = "processing_settings"
@@ -385,6 +447,8 @@ class ProcessingSettingsView(APIView):
 
 
 class ProcessingSettingsOptionsView(APIView):
+    """Entrega opciones permitidas para el formulario de configuración."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -393,6 +457,8 @@ class ProcessingSettingsOptionsView(APIView):
 
 
 class OllamaModelsView(APIView):
+    """Expone un snapshot de modelos Ollama detectados por el backend."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
@@ -401,6 +467,8 @@ class OllamaModelsView(APIView):
 
 
 class AssistantChatView(APIView):
+    """Orquesta el chat del asistente y devuelve respuesta más metadatos."""
+
     authentication_classes = []
     permission_classes = [ApiKeyPermission]
 
