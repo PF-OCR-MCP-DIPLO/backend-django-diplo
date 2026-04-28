@@ -37,6 +37,7 @@ services:
       API_KEY: ""
       ALLOW_OPEN_API_FOR_DEV: "1"
       STUB_PROVIDERS: "${STUB_PROVIDERS:-0}"
+
       LOG_LEVEL: "INFO"
       # Modelos LLM / OCR / Assistant (variables de entorno)
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:7b}"
