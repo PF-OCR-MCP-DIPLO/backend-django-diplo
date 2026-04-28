@@ -80,6 +80,24 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertEqual(query["order_by"], existing_query["order_by"])
         self.assertEqual(query["limit"], 200)
 
+    def test_explicit_query_beats_followup_context(self):
+        existing_query = {
+            "source": "process_runs",
+            "filters": [{"field": "status", "op": "eq", "value": "completed"}],
+            "order_by": [{"field": "created_at", "direction": "desc"}],
+            "limit": 20,
+        }
+        intent = self.agent.infer(
+            messages=[{"role": "user", "content": "Muéstrame el valor de las transferencias"}],
+            job_id=None,
+            errors=0,
+            query_context={"last_query": existing_query},
+        )
+
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+
     def test_followup_no_longer_returns_last_record_value(self):
         existing_query = {
             "source": "deposits",
@@ -105,6 +123,15 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertEqual(query["order_by"][0]["field"], "valor")
         self.assertEqual(query["order_by"][0]["direction"], "desc")
 
+    def test_highest_value_record_without_transaction_word(self):
+        intent = self._infer("Cuál es el registro de mayor valor?")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertEqual(query["limit"], 1)
+        self.assertEqual(query["order_by"][0]["field"], "valor")
+        self.assertEqual(query["order_by"][0]["direction"], "desc")
+
     def test_lowest_value_transaction(self):
         intent = self._infer("Y si quiero el registro de menor valor")
         self.assertEqual(intent.tool_hint, "query_database")
@@ -113,6 +140,15 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertEqual(query["limit"], 1)
         self.assertEqual(query["order_by"][0]["field"], "valor")
         self.assertEqual(query["order_by"][0]["direction"], "asc")
+
+    def test_current_month_records_query_without_transaction_word(self):
+        intent = self._infer("Cuáles fueron los registros del mes actual?")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        ops = {item["op"] for item in query["filters"]}
+        self.assertIn("date_gte", ops)
+        self.assertIn("date_lte", ops)
 
     def test_current_month_transactions(self):
         intent = self._infer("Transacciones del mes actual")

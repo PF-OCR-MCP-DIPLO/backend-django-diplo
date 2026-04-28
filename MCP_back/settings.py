@@ -233,7 +233,38 @@ STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"
 
 OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "ollama_vision")
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama_text")
-OLLAMA_URL = "http://host.docker.internal:11434/api/generate"
+
+# Local con python manage.py runserver:
+#   OLLAMA_URL=http://127.0.0.1:11434/api/generate
+#
+# Backend dentro de Docker y Ollama en el host:
+#   OLLAMA_URL=http://host.docker.internal:11434/api/generate
+#
+# Backend y Ollama dentro del mismo docker-compose:
+#   OLLAMA_URL=http://ollama:11434/api/generate
+OLLAMA_BASE_URL = os.environ.get(
+    "OLLAMA_BASE_URL",
+    "http://127.0.0.1:11434",
+).rstrip("/")
+
+OLLAMA_URL = os.environ.get(
+    "OLLAMA_URL",
+    f"{OLLAMA_BASE_URL}/api/generate",
+)
+
+OLLAMA_TAGS_URL = os.environ.get(
+    "OLLAMA_TAGS_URL",
+    f"{OLLAMA_BASE_URL}/api/tags",
+)
+
+# Usa modelos que sí tienes instalados.
+# Según tu /api/tags tienes:
+# - llama3.2:3b
+# - gemma4:26b
+# - gemma4:e4b
+# - gemma4:e2b
+# - qwen3.5:latest
+# - gemma3:1b-it-qat
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:e2b")
 OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "240"))

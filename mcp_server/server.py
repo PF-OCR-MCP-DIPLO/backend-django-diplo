@@ -57,7 +57,10 @@ def _runtime_error_payload(error: Exception) -> str:
 
 
 def _build_assistant_response(payload: dict[str, Any]) -> dict[str, Any]:
-    """Valida la entrada del chat del asistente y ejecuta la respuesta."""
+    """Valida la entrada del chat y ejecuta la misma lógica usada por la API.
+
+    Mantener este puente evita divergencias de contrato entre consumo MCP y REST.
+    """
     serializer = AssistantChatSerializer(data=payload)
     if not serializer.is_valid():
         return {
@@ -80,7 +83,11 @@ def _build_assistant_response(payload: dict[str, Any]) -> dict[str, Any]:
 def _run_local_tool(
     tool: str, arguments: dict[str, Any] | None = None, job_id: int | None = None
 ) -> str:
-    """Ejecuta una herramienta interna y la envuelve en el contrato MCP."""
+    """Ejecuta herramientas internas y estandariza salida para clientes MCP.
+
+    Todo resultado se envuelve en JSON con claves `ok`, `data`, `status_code`
+    y `detail` para simplificar manejo en clientes aguas arriba.
+    """
     try:
         payload = execute_tool(tool=tool, arguments=arguments, job_id=job_id)
         return _as_json(
@@ -111,7 +118,11 @@ def upload_document(file_path: str) -> str:
 
 @mcp.tool()
 def process_job(job_id: int) -> str:
-    """Ejecuta OCR y extracción sobre una corrida existente."""
+    """Ejecuta OCR/LLM sobre una corrida existente.
+
+    Requiere `MCP_ENABLE_MUTATIONS=1` para evitar mutaciones accidentales desde
+    asistentes en ambientes de solo consulta.
+    """
     if not _mutations_enabled():
         return _as_json(
             {
@@ -304,7 +315,10 @@ def update_processing_settings(
     llm_api_key: str | None = None,
     request_timeout_seconds: int | None = None,
 ) -> str:
-    """Aplica un parche parcial sobre la configuración de procesamiento."""
+    """Aplica un parche parcial sobre settings de procesamiento.
+
+    Los campos nulos se omiten para conservar semántica de PATCH.
+    """
     if not _mutations_enabled():
         return _as_json(
             {

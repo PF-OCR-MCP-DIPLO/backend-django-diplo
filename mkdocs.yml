@@ -1,29 +1,57 @@
 site_name: backend-diplo-final
 site_description: Documentación técnica del backend Django
+
+docs_dir: docs
+site_dir: site
+
 theme:
   name: material
+
 nav:
   - Inicio: index.md
-  - Archivo: archive/README.md
+
+  - Guías principales:
+      - Primeros pasos: getting-started.md
+      - Configuración: configuration.md
+      - Desarrollo: development.md
+      - Pruebas: testing.md
+      - Troubleshooting: troubleshooting.md
+
   - Arquitectura:
       - Overview: architecture/overview.md
       - Data flow: architecture/data-flow.md
+      - Arquitectura general: architecture.md
+
   - Setup:
       - Desarrollo local: setup/local-development.md
       - Entorno: setup/environment.md
+
   - Backend:
       - Apps: backend/apps.md
-      - API: backend/api.md
+      - API backend: backend/api.md
       - Modelos: backend/models.md
       - Servicios: backend/services.md
       - Pipeline: backend/processing-pipeline.md
       - Seguridad: backend/security.md
       - MCP: backend/mcp.md
       - Operaciones: backend/operations.md
-  - Testing: TESTING.md
+
+  - Referencia técnica:
+      - API: api.md
+      - Autenticación: authentication.md
+      - Base de datos: database.md
+      - Integraciones: integrations.md
+      - Jobs y workers: jobs-and-workers.md
+
+  - Database:
+      - Structure: DATABASE_STRUCTURE.md
+      - MariaDB Quickstart: MARIADB_QUICKSTART.md
+      - MariaDB Setup: MARIADB_SETUP.md
+
+  - Testing detallado: TESTING.md
   - Deployment: deployment.md
-  - Troubleshooting: troubleshooting.md
   - Contributing: contributing.md
+
   - Operación:
       - Quality gate: QUALITY_GATE.md
       - Mantenimiento de docs: DOCS_MAINTENANCE.md
@@ -31,23 +59,31 @@ nav:
       - Fallos de procesamiento: backend/runbooks/processing-failures.md
       - Checklist producción: backend/runbooks/production-checklist.md
       - Checklist release: backend/runbooks/release-checklist.md
+
   - Calidad y mantenimiento:
       - Documentación interna del código: code-documentation.md
       - Auditoría interna del código: internal-code-audit.md
+
   - ADRs:
       - Resumen: adr/README.md
       - ADR 0001: adr/0001-backend-stack.md
       - ADR 0002: adr/0002-processing-pipeline-boundary.md
       - ADR 0003: adr/0003-docs-as-code.md
-  - Integración: integration/frontend-backend.md
+
+  - Integración:
+      - Frontend / Backend: integration/frontend-backend.md
+
+  - Archivo:
+      - Índice de archivo: archive/README.md
+
   - Referencia heredada:
       - Arquitectura anterior: ARCHITECTURE.md
       - Backend anterior: BACKEND.md
-      - Arquitectura legacy: architecture.md
       - Demo runbook: demo_runbook.md
       - MCP anterior: mcp.md
       - Plan migración: migration_plan.md
       - Scope MVP: mvp_scope.md
+
 markdown_extensions:
   - admonition
   - tables

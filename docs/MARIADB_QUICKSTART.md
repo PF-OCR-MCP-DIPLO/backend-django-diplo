@@ -177,7 +177,7 @@ docker-compose exec mariadb mysql -u root -proot_mcp_2026 -e "SELECT 1;"
 
 ## 📚 Documentación Completa
 
-Ver [MARIADB_SETUP.md](docs/MARIADB_SETUP.md) para:
+Ver [MARIADB_SETUP.md](MARIADB_SETUP.md) para:
 - Estructura completa de tablas
 - Variables de entorno
 - Migraciones posteriores

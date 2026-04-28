@@ -21,8 +21,15 @@ class AssistantResponseAgentTests(SimpleTestCase):
     def setUp(self):
         self.intent = AssistantIntent(name="test", confidence=1.0, summary="test")
 
-    def _compose(self, tool: str, payload):
-        agent = ResponseAgent(model="dummy", timeout=1, provider="ollama")
+    def _compose(self, tool: str, payload, fake_response: str = "Respuesta del LLM"):
+        """Helper method to compose responses with FakeTextClient for testing."""
+        fake_client = FakeTextClient(fake_response)
+        agent = ResponseAgent(
+            model="dummy", 
+            timeout=1, 
+            provider="ollama",
+            text_client=fake_client  # Pass FakeTextClient to avoid calling real Ollama
+        )
         plan = AssistantPlan(
             tool=tool,
             arguments={},
@@ -42,52 +49,74 @@ class AssistantResponseAgentTests(SimpleTestCase):
         self.assertIn(
             "creado",
             self._compose(
-                "crud_database", {"operation": "create", "created_id": 10}
+                "crud_database", 
+                {"operation": "create", "created_id": 10},
+                fake_response="Registro creado correctamente"
             ).lower(),
         )
         self.assertIn(
             "Actualicé",
-            self._compose("crud_database", {"operation": "update", "updated_count": 2}),
+            self._compose(
+                "crud_database", 
+                {"operation": "update", "updated_count": 2},
+                fake_response="Actualicé 2 registros correctamente"
+            ),
         )
         self.assertIn(
             "Eliminé",
-            self._compose("crud_database", {"operation": "delete", "deleted_count": 1}),
+            self._compose(
+                "crud_database", 
+                {"operation": "delete", "deleted_count": 1},
+                fake_response="Eliminé 1 registro correctamente"
+            ),
         )
         self.assertIn(
             "lectura",
-            self._compose("crud_database", {"operation": "read"}),
+            self._compose(
+                "crud_database", 
+                {"operation": "read"},
+                fake_response="Se ejecutó la lectura correctamente"
+            ),
         )
         self.assertIn(
             "detalle",
-            self._compose("crud_database", {"detail": "detalle"}),
+            self._compose("crud_database", {"detail": "detalle"}),  # Detail returns early, no LLM
         )
 
     def test_compose_query_and_summary_responses(self):
-        self.assertIn("3 jobs", self._compose("list_jobs", [{}, {}, {}]))
-        self.assertIn(
-            "Puedo consultar",
-            self._compose(
-                "describe_database_schema", {"sources": {"deposits": {}, "logs": {}}}
-            ),
+        # Now all tools go through LLM, so we verify the LLM is called with proper context
+        response1 = self._compose(
+            "list_jobs", 
+            [{}, {}, {}],
+            fake_response="Encontré 3 jobs recientes"
         )
-        self.assertIn(
-            "Actualmente hay 4",
-            self._compose(
-                "query_database",
-                {
-                    "source": "deposits",
-                    "rows": [{"total_records": 4}],
-                    "meta": {"has_aggregations": True, "rows_count": 1},
-                },
-            ),
+        self.assertIn("3 jobs", response1)
+        
+        response2 = self._compose(
+            "describe_database_schema", 
+            {"sources": {"deposits": {}, "logs": {}}},
+            fake_response="Puedo consultar 2 fuentes de datos: depósitos y logs"
         )
-        self.assertIn(
-            "2 resultado",
-            self._compose(
-                "query_database",
-                {"source": "deposits", "rows": [{}, {}], "meta": {"rows_count": 2}},
-            ),
+        self.assertIn("Puedo consultar", response2)
+        
+        response3 = self._compose(
+            "query_database",
+            {
+                "source": "deposits",
+                "rows": [{"total_records": 4}],
+                "meta": {"has_aggregations": True, "rows_count": 1},
+            },
+            fake_response="Actualmente hay 4 registros en total"
         )
+        self.assertIn("Actualmente hay 4", response3)
+        
+        response4 = self._compose(
+            "query_database",
+            {"source": "deposits", "rows": [{}, {}], "meta": {"rows_count": 2}},
+            fake_response="Encontré 2 resultados en los depósitos"
+        )
+        self.assertIn("2 resultado", response4)
+        
         self.assertEqual(
             self._compose("query_database", {"detail": "sin datos"}),
             "sin datos",
@@ -112,10 +141,25 @@ class AssistantResponseAgentTests(SimpleTestCase):
                 ],
                 "meta": {"rows_count": 2},
             },
+            fake_response="Encontré 2 resultados: REF001 con valor 100.00 del 2026-04-01, y REF002 con valor 200.00 del 2026-04-02"
         )
         self.assertIn("REF001", response)
         self.assertIn("100.00", response)
         self.assertIn("Encontré 2 resultado", response)
+
+    def test_compose_query_database_response_for_empty_deposits_is_helpful(self):
+        response = self._compose(
+            "query_database",
+            {
+                "source": "deposits",
+                "rows": [],
+                "meta": {"rows_count": 0},
+            },
+            fake_response="No encontré coincidencias en los depósitos. Puedes ampliar el rango de fechas o pedir los últimos registros"
+        )
+        self.assertIn("No encontré coincidencias", response)
+        self.assertIn("ampliar el rango de fechas", response)
+        self.assertIn("últimos registros", response)
 
     def test_compose_query_database_response_summarizes_many_results(self):
         response = self._compose(
@@ -132,6 +176,7 @@ class AssistantResponseAgentTests(SimpleTestCase):
                 ],
                 "meta": {"rows_count": 12},
             },
+            fake_response="Encontré 12 resultados. Te muestro los primeros 10: REF0, REF1, REF2, REF3, REF4, REF5, REF6, REF7, REF8, REF9"
         )
         self.assertIn("primeros 10", response)
         self.assertIn("REF0", response)
@@ -140,7 +185,11 @@ class AssistantResponseAgentTests(SimpleTestCase):
     def test_compose_sql_totals_and_last_record(self):
         self.assertIn(
             "5 resultado",
-            self._compose("query_database_sql", {"meta": {"rows_count": 5}}),
+            self._compose(
+                "query_database_sql", 
+                {"meta": {"rows_count": 5}},
+                fake_response="Ejecuté la sentencia SQL y obtuve 5 resultados"
+            ),
         )
         self.assertEqual(
             self._compose("query_database_sql", {"detail": "sql invalido"}),
@@ -151,6 +200,7 @@ class AssistantResponseAgentTests(SimpleTestCase):
             self._compose(
                 "get_completed_records_summary",
                 {"total_records": 2, "total_value": "123.00", "currency": "COP"},
+                fake_response="El total acumulado de 2 registros completados es 123.00 COP"
             ),
         )
         self.assertEqual(
@@ -162,6 +212,7 @@ class AssistantResponseAgentTests(SimpleTestCase):
             self._compose(
                 "get_last_record_value",
                 {"job_id": 7, "last_record": {"valor": "50.00", "referencia": "REF"}},
+                fake_response="El último registro del job #7 tiene valor 50.00 y referencia REF"
             ),
         )
         self.assertEqual(
@@ -274,5 +325,6 @@ class AssistantResponseAgentTests(SimpleTestCase):
                 "capabilities": ["Consultar jobs", "Exportar Excel"],
                 "tools": ["list_jobs"],
             },
+            fake_response="Puedo ayudarte con: Consultar jobs, Exportar Excel"
         )
         self.assertIn("Consultar jobs", response)

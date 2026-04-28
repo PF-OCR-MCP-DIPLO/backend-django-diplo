@@ -238,15 +238,12 @@ class IntentAgent:
                 name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
             )
 
-        followup_intent = self._infer_followup_intent(
-            last_user_message, normalized_query_context
+        direct_intent = self._infer_direct_intent(
+            last_user_message,
+            job_id,
         )
-        if followup_intent is not None:
-            return followup_intent
-        if not last_user_message:
-            return AssistantIntent(
-                name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
-            )
+        if direct_intent is not None:
+            return direct_intent
 
         if self._looks_like_greeting(last_user_message):
             return AssistantIntent(
@@ -256,12 +253,6 @@ class IntentAgent:
                 summary="Saludo o charla general",
             )
 
-        direct_intent = self._infer_direct_intent(
-            last_user_message,
-            job_id,
-        )
-        if direct_intent is not None:
-            return direct_intent
         if self._matches_capabilities_request(last_user_message):
             return AssistantIntent(
                 name="capabilities",
@@ -269,6 +260,12 @@ class IntentAgent:
                 tool_hint="explain_capabilities",
                 summary="Pregunta de capacidades o ayuda",
             )
+
+        followup_intent = self._infer_followup_intent(
+            last_user_message, normalized_query_context
+        )
+        if followup_intent is not None:
+            return followup_intent
 
         return self._infer_with_llm(messages, job_id=job_id, errors=errors)
 
@@ -822,7 +819,27 @@ class IntentAgent:
         )
 
     def _looks_like_transaction_query(self, text: str) -> bool:
-        transaction_terms = (
+        record_terms = (
+            "registro",
+            "registros",
+            "transaccion",
+            "transacción",
+            "transacciones",
+            "transferencia",
+            "transferencias",
+            "movimiento",
+            "movimientos",
+            "deposito",
+            "depósito",
+            "depositos",
+            "depósitos",
+            "consignacion",
+            "consignación",
+            "consignaciones",
+            "referencia",
+            "referencias",
+        )
+        transaction_terms = record_terms + (
             "transaccion",
             "transacción",
             "transacciones",
@@ -867,11 +884,22 @@ class IntentAgent:
             "último mes",
             "este año",
         )
-        return _contains_any(text, transaction_terms) or (
-            _contains_any(text, action_terms)
-            and _contains_any(
-                text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
-            )
+        if _contains_any(text, transaction_terms):
+            return True
+        if _contains_any(text, ("base de datos", "base datos", "bd")) and _contains_any(
+            text, record_terms
+        ):
+            return True
+        if _contains_any(text, ("mayor valor", "menor valor", "mayor importe", "menor importe")) and _contains_any(
+            text, record_terms
+        ):
+            return True
+        if _contains_any(text, ("mes actual", "mes en curso", "este mes", "del mes", "ultimo mes", "último mes")) and _contains_any(
+            text, record_terms
+        ):
+            return True
+        return _contains_any(text, action_terms) and _contains_any(
+            text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
         )
 
     def _has_explicit_limit_request(self, text: str) -> bool:
@@ -2867,74 +2895,9 @@ class ResponseAgent:
         task_context: dict[str, Any] | None = None,
     ) -> str:
         if task is not None and task_context is not None:
-            if task.name == "explain_job_summary" and isinstance(tool_payload, dict):
-                detail = tool_payload.get("detail")
-                if detail:
-                    return str(detail)
-                total_records = tool_payload.get("total_records", 0)
-                total_images = tool_payload.get("total_images", 0)
-                status = tool_payload.get("status", "unknown")
-                return f"El job #{job_id} va en estado {status}, con {total_images} imagen(es) y {total_records} registro(s) extraidos."
-
-            if task.name == "explain_job_findings" and isinstance(tool_payload, dict):
-                findings = (
-                    task_context.get("findings", {})
-                    if isinstance(task_context, dict)
-                    else {}
-                )
-                if isinstance(findings, dict):
-                    count = findings.get("rows_with_observations", 0)
-                    return (
-                        f"Encontré {count} fila(s) con hallazgos en el job #{job_id}."
-                    )
-
-            if task.name == "explain_row_issue" and isinstance(task_context, dict):
-                selected_row = task_context.get("selected_row")
-                if isinstance(selected_row, dict):
-                    return (
-                        f"La fila seleccionada tiene referencia {selected_row.get('referencia', 'N/D')} "
-                        f"y valor {selected_row.get('valor', 'N/D')}. "
-                        "Te muestro su contexto para revisar el problema."
-                    )
-
-            if task.name == "suggest_row_correction" and isinstance(task_context, dict):
-                selected_row = task_context.get("selected_row")
-                if isinstance(selected_row, dict):
-                    observations = selected_row.get("observations") or []
-                    suggestion = "Revisa la fila seleccionada y confirma los datos faltantes o inconsistentes."
-                    if observations:
-                        suggestion = f"Revisa la fila seleccionada. Observaciones detectadas: {', '.join(str(item) for item in observations[:3])}."
-                    return suggestion
-
-            if task.name == "summarize_extraction_logs" and isinstance(
-                tool_payload, list
-            ):
-                if tool_payload:
-                    errors_count = sum(
-                        1
-                        for item in tool_payload
-                        if isinstance(item, dict) and item.get("is_error")
-                    )
-                    return f"Encontré {len(tool_payload)} log(s) para el job #{job_id}; {errors_count} indican error."
-
-            if task.name == "explain_extraction_criteria" and isinstance(
-                task_context, dict
-            ):
-                criteria = task_context.get("criteria", {})
-                if isinstance(criteria, dict):
-                    enabled = criteria.get("enabled_fields") or []
-                    if enabled:
-                        return (
-                            "Los criterios activos incluyen: "
-                            + ", ".join(str(item) for item in enabled)
-                            + "."
-                        )
-
-            if task.name == "prepare_export":
-                return "Puedo preparar la exportación, pero necesito tu confirmación antes de ejecutarla."
-
-            if task.name == "prepare_reprocess":
-                return "Puedo reprocesar el job, pero necesito tu confirmación antes de ejecutarlo."
+            # Task-specific handlers - will be passed to LLM for response generation
+            # LLM will generate natural response with task context
+            pass
 
         if intent.name == "followup_not_supported":
             return (
@@ -2942,119 +2905,18 @@ class ResponseAgent:
                 "Por favor especifica de nuevo la consulta completa."
             )
 
-        if plan.tool == "crud_database" and isinstance(tool_payload, dict):
-            if tool_payload.get("detail"):
-                return str(tool_payload.get("detail"))
-            operation = tool_payload.get("operation")
-            if operation == "create":
-                return f"Registro creado correctamente con id {tool_payload.get('created_id')}."
-            if operation == "update":
-                return f"Actualicé {tool_payload.get('updated_count', 0)} registro(s)."
-            if operation == "delete":
-                return f"Eliminé {tool_payload.get('deleted_count', 0)} registro(s)."
-            if operation == "read":
-                return "Consulta CRUD de lectura ejecutada correctamente."
-
-        if plan.tool == "explain_capabilities" and isinstance(tool_payload, dict):
-            capabilities = tool_payload.get("capabilities") or []
-            if isinstance(capabilities, list) and capabilities:
-                return "Puedo ayudarte con: " + "; ".join(
-                    str(item) for item in capabilities
-                )
-            return (
-                "Puedo ayudarte con jobs, logs, correcciones, settings y exportación."
-            )
-
-        if plan.tool == "help" and isinstance(tool_payload, dict):
-            return self.compose(
-                messages=messages,
-                intent=intent,
-                plan=AssistantPlan(
-                    tool="explain_capabilities",
-                    arguments={},
-                    intent_name=plan.intent_name,
-                    intent_summary=plan.intent_summary,
-                ),
-                tool_payload=tool_payload,
-                job_id=job_id,
-                errors=errors,
-            )
-
-        if plan.tool == "list_jobs" and isinstance(tool_payload, list):
-            return f"Encontré {len(tool_payload)} jobs recientes. Te los muestro en tarjetas en la interfaz."
-
-        if plan.tool == "list_available_tools" and isinstance(tool_payload, list):
-            tools = [
-                item.get("tool", str(item))
-                for item in tool_payload
-                if isinstance(item, dict)
-            ]
-            if tools:
-                return "Estas son las herramientas disponibles: " + ", ".join(tools)
-            return "Estas son las herramientas disponibles."
-
-        if plan.tool == "describe_database_schema" and isinstance(tool_payload, dict):
-            sources = (
-                tool_payload.get("sources")
-                if isinstance(tool_payload.get("sources"), dict)
-                else {}
-            )
-            return (
-                f"Puedo consultar {len(sources)} fuentes de datos. "
-                "Te muestro tablas/campos disponibles y ejemplo de consulta para cada una."
-            )
-
-        if plan.tool == "query_database" and isinstance(tool_payload, dict):
+        # For template tools with detail/error messages, return early
+        if isinstance(tool_payload, dict) and tool_payload.get("detail"):
             detail = tool_payload.get("detail")
             if detail:
                 return str(detail)
-            source = tool_payload.get("source", "datos")
-            meta = tool_payload.get("meta") or {}
-            rows = tool_payload.get("rows", [])
 
-            if meta.get("has_aggregations") and len(rows) == 1:
-                row = rows[0]
-                if "total_records" in row:
-                    count = row["total_records"]
-                    return f"Actualmente hay {count} registros en total."
-                return self._format_aggregated_query_database_response(row)
-
-            return self._format_query_database_rows(source, rows, meta)
-
-        if plan.tool == "query_database_sql" and isinstance(tool_payload, dict):
-            detail = tool_payload.get("detail")
-            if detail:
-                return str(detail)
-            meta = tool_payload.get("meta") or {}
-            rows_count = meta.get("rows_count", 0)
-            return f"Ejecuté la sentencia SQL en modo lectura y obtuve {rows_count} resultado(s)."
-
+        # For template tools with detail/error messages, return early
         if isinstance(tool_payload, dict) and tool_payload.get("requires_confirmation"):
             detail = tool_payload.get("detail")
             if detail:
                 return str(detail)
             return "La accion solicitada requiere confirmacion explicita."
-
-        if plan.tool == "get_completed_records_summary" and isinstance(
-            tool_payload, dict
-        ):
-            detail = tool_payload.get("detail")
-            if detail:
-                return str(detail)
-            return (
-                f"El total acumulado de {tool_payload.get('total_records', 0)} registros completados "
-                f"es {tool_payload.get('total_value', '0.00')} {tool_payload.get('currency', '')}."
-            )
-
-        if plan.tool == "get_last_record_value" and isinstance(tool_payload, dict):
-            detail = tool_payload.get("detail")
-            if detail:
-                return str(detail)
-            last_record = tool_payload.get("last_record") or {}
-            valor = last_record.get("valor") or "N/D"
-            referencia = last_record.get("referencia") or "N/D"
-            job_ref = tool_payload.get("job_id")
-            return f"El ultimo registro del job #{job_ref} tiene valor {valor} y referencia {referencia}."
 
         if plan.tool == "update_deposit_correction" and isinstance(tool_payload, dict):
             detail = deposit_correction_failure_description(tool_payload)
@@ -3074,8 +2936,9 @@ class ResponseAgent:
 
         conversation = self._last_user_message(messages)
         prompt = f"""
-Eres el asistente del dashboard de procesamiento.
-Responde en espanol, claro y breve.
+Eres el asistente conversacional del dashboard de procesamiento.
+Responde SIEMPRE en espanol, de forma natural, amable y clara.
+Las respuestas deben sonar como una persona hablando, no como una maquina.
 
 Contexto:
 - intent_detectado: {intent.name}
@@ -3091,12 +2954,12 @@ Resultado de la herramienta:
 {self._safe_json_dump(tool_payload)}
 
 Instrucciones:
-- Si la herramienta devolvio datos, resumelos de forma util.
-- Si no se uso herramienta, responde directamente a la pregunta.
-- No menciones JSON ni detalles internos de implementacion.
-- Si la herramienta ejecutada es get_job_status, resume estado, total de registros y nombre del archivo.
-- Si la herramienta ejecutada es get_job_logs, resume la cantidad de logs y el estado general.
-""".strip()
+- Responde de forma conversacional y natural, como si hablaras con un compañero.
+- Usa expresiones naturales: "Encontré...", "Te muestro...", "Actualicé...", "Aquí están..."
+- Resume datos de forma clara sin listar JSON ni tecnicismos internos.
+- Si hay múltiples resultados, presenta un resumen útil y ofrece opciones.
+- Si no hay resultados, ofrece sugerencias constructivas para refinar la búsqueda.
+- Mantén el tono profesional pero accesible.""".strip()
 
         if task is not None and task_context is not None:
             prompt += f"\n\nTarea orientada:\n- {task.name}\n- {task.summary}\n\nContexto de tarea:\n{self._safe_json_dump(task_context)}"
@@ -3123,7 +2986,13 @@ Instrucciones:
             meta.get("rows_count", len(rows) if isinstance(rows, list) else 0)
         )
         if rows_count == 0:
-            return f"La consulta sobre {source} no devolvió resultados."
+            if source == "deposits":
+                return (
+                    "No encontré coincidencias en los depósitos. "
+                    "Puedes ampliar el rango de fechas, pedir los últimos registros "
+                    "o hacer una búsqueda más específica."
+                )
+            return f"No encontré coincidencias en {self._source_label(source)}."
 
         formatted_rows: list[str] = []
         for row in rows:
@@ -3152,14 +3021,23 @@ Instrucciones:
         if rows_count > 10:
             preview = formatted_rows[:10]
             header = (
-                f"Encontré {rows_count} resultados en {source}. "
+                f"Encontré {rows_count} resultados en {self._source_label(source)}. "
                 f"Aquí están los primeros {len(preview)}:"
             )
         else:
             preview = formatted_rows
-            header = f"Encontré {rows_count} resultado(s) en {source}:"
+            header = f"Encontré {rows_count} resultado(s) en {self._source_label(source)}:"
 
         return header + "\n" + "\n".join(preview)
+
+    def _source_label(self, source: str) -> str:
+        labels = {
+            "process_runs": "los jobs de procesamiento",
+            "deposits": "los depósitos",
+            "source_images": "las imágenes procesadas",
+            "logs": "los logs de procesamiento",
+        }
+        return labels.get(source, source)
 
     def _generate_text(self, prompt: str) -> str:
         return self.text_client.generate(
@@ -3201,28 +3079,28 @@ Instrucciones:
         conversation = self._format_conversation(messages)
         context_hint = self._format_context_hint(query_context)
         prompt = f"""
-Eres un asistente conversacional útil para un dashboard de procesamiento.
-Responde de forma natural, breve y clara en espanol.
+Eres un asistente conversacional útil para un dashboard de procesamiento de documentos.
+Responde SIEMPRE de forma natural, amable y clara en español.
+Tus respuestas deben ser como si hablaras con alguien en persona, no como una máquina.
 
-        Contexto:
-        - job_id_actual: {job_id if job_id is not None else 'null'}
-        - errores_detectados: {errors}
-        - contexto_activo: {context_hint}
-        - query_context: {self._safe_json_dump(query_context)}
-        - tarea_actual: {task.name if task else 'answer_general_question'}
-        - task_context: {self._safe_json_dump(task_context or {})}
+Contexto actual:
+- job_id: {job_id if job_id is not None else 'ninguno'}
+- errores: {errors}
+- contexto: {context_hint}
+- tarea_actual: {task.name if task else 'responder pregunta general'}
 
-Capacidades:
+Lo que puedes hacer:
 {chr(10).join(f"- {item}" for item in _CAPABILITIES)}
 
-Conversacion:
+Conversacion reciente:
 {conversation}
 
 Instrucciones:
-- Si el usuario saluda, saluda de vuelta y ofrece ayuda.
-- Si pregunta por herramientas o MCP, explica capacidades sin listar JSON.
-- Si pide ayuda general, responde como conversación.
-""".strip()
+- Responde de forma conversacional y natural, como si fueras un compañero.
+- Si saludas, sé amable y ofrece ayuda con una pregunta natural.
+- Si preguntan por capacidades, explica qué puedes hacer sin listar detalles técnicos.
+- Usa ejemplos y términos que sea fácil entender.
+- Sé conciso pero útil.""".strip()
         response = self._generate_text(prompt)
         return (
             response.strip()

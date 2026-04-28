@@ -8,8 +8,8 @@
 ┌─────────────────────────────────────────────────────┐
 │        DESARROLLO LOCAL - SQLite3                   │
 ├─────────────────────────────────────────────────────┤
-│                                                      │
-│  Frontend ──┐                                        │
+│                                                     │
+│  Frontend ──┐                                       │
 │             ├──────► Backend Django ◄──────┐        │
 │  Navegador ─┘                              │        │
 │                                            │        │
@@ -18,13 +18,13 @@
 │                                  │ (archivo)  │     │
 │                                  │ db.sqlite3 │     │
 │                                  └────────────┘     │
-│                                                      │
-│  LIMITACIONES:                                       │
-│  ❌ No escalable                                     │
-│  ❌ Limitado en concurrencia                         │
+│                                                     │
+│  LIMITACIONES:                                      │
+│  ❌ No escalable                                    │
+│  ❌ Limitado en concurrencia                        │
 │  ❌ Dificil de replicar                             │
 │  ❌ No recomendado para producción                  │
-│                                                      │
+│                                                     │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -34,45 +34,45 @@
 ┌─────────────────────────────────────────────────────┐
 │    DESARROLLO + PRODUCCIÓN - MariaDB (Docker)       │
 ├─────────────────────────────────────────────────────┤
-│                                                      │
-│  Frontend ──┐                                        │
+│                                                     │
+│  Frontend ──┐                                       │
 │             ├──────► Backend Django                 │
 │  Navegador ─┘        (Puerto 8000)                  │
 │                           │                         │
-│                    ┌──────▼──────┐                  │
+│                    ┌──────▼───────┐                 │
 │                    │  Migraciones │                 │
 │                    │    Django    │                 │
-│                    └──────┬──────┘                  │
+│                    └──────┬───────┘                 │
 │                           │                         │
-│                    ┌──────▼──────────────┐           │
-│                    │   MariaDB 11.4      │           │
-│                    │  (Contenedor)       │           │
-│                    │                      │           │
-│                    │  UUID: utf8mb4      │           │
-│                    │  Collation: u.u.c   │           │
-│                    │  ACID Transactions  │           │
-│                    │  InnoDB Storage     │           │
-│                    │                      │           │
-│                    │  Tablas:            │           │
-│                    │  • processrun       │           │
-│                    │  • sourceimage      │           │
-│                    │  • extracteddeposit │           │
-│                    │  • settings         │           │
-│                    │  • extractionlog    │           │
-│                    │  • ... (Django)     │           │
-│                    │                      │           │
-│                    │  Volumen persistente│           │
-│                    │  mariadb_data       │           │
-│                    └──────────────────────┘           │
-│                                                      │
-│  VENTAJAS:                                           │
-│  ✅ Escalable                                        │
+│                    ┌──────▼───────────────┐         │
+│                    │   MariaDB 11.4       │         │
+│                    │  (Contenedor)        │         │
+│                    │                      │         │
+│                    │  UUID: utf8mb4       │         │
+│                    │  Collation: u.u.c    │         │
+│                    │  ACID Transactions   │         │
+│                    │  InnoDB Storage      │         │
+│                    │                      │         │
+│                    │  Tablas:             │         │
+│                    │  • processrun        │         │
+│                    │  • sourceimage       │         │
+│                    │  • extracteddeposit  │         │
+│                    │  • settings          │         │
+│                    │  • extractionlog     │         │
+│                    │  • ... (Django)      │         │
+│                    │                      │         │
+│                    │  Volumen persistente │         │
+│                    │  mariadb_data        │         │
+│                    └──────────────────────┘         │
+│                                                     │
+│  VENTAJAS:                                          │
+│  ✅ Escalable                                       │
 │  ✅ Transacciones ACID                              │
 │  ✅ Unicode completo                                │
 │  ✅ Listo para producción                           │
 │  ✅ Fácil replicación                               │
 │  ✅ Backups nativos                                 │
-│                                                      │
+│                                                     │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -199,7 +199,7 @@ docker-compose up -d
 └──────────────────────────────────────────────────────┘
 
 ╔══════════════════════════════════════════════════════╗
-║  OPCIÓN 1: Docker Compose (Recomendado) ⭐          ║
+║  OPCIÓN 1: Docker Compose (Recomendado) ⭐           ║
 ╠══════════════════════════════════════════════════════╣
 ║                                                      ║
 ║  $ cd backend-django-diplo                           ║
@@ -216,7 +216,7 @@ docker-compose up -d
 ╚══════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════╗
-║  OPCIÓN 2: Local Development (Sin Docker)           ║
+║  OPCIÓN 2: Local Development (Sin Docker)            ║
 ╠══════════════════════════════════════════════════════╣
 ║                                                      ║
 ║  $ pip install -r requirements.txt                   ║
@@ -236,7 +236,7 @@ docker-compose up -d
 ╚══════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════╗
-║  OPCIÓN 3: Windows PowerShell                       ║
+║  OPCIÓN 3: Windows PowerShell                        ║
 ╠══════════════════════════════════════════════════════╣
 ║                                                      ║
 ║  PS> cd backend-django-diplo                         ║
@@ -246,7 +246,7 @@ docker-compose up -d
 ║                                                      ║
 ║  ✅ Ventajas:                                        ║
 ║  • Funciona igual que en Linux                       ║
-║  • Instrucciones específicas disponibles              ║
+║  • Instrucciones específicas disponibles             ║
 ║  • Docker Desktop soportado                          ║
 ║                                                      ║
 ╚══════════════════════════════════════════════════════╝
@@ -304,27 +304,27 @@ docker-compose up -d
 │                   ✅ MIGRACIÓN EXITOSA                  │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
-│  SQLite3 ──────────────────────► MariaDB 11.4          │
+│  SQLite3 ──────────────────────► MariaDB 11.4           │
 │                                                         │
-│  Cambios:                                              │
-│  ✅ Base de datos relacional escalable                 │
-│  ✅ Transacciones ACID garantizadas                    │
-│  ✅ Unicode UTF-8MB4 completo                          │
-│  ✅ Listo para producción                              │
-│  ✅ Automatización completa                            │
-│  ✅ Documentación exhaustiva                           │
+│  Cambios:                                               │
+│  ✅ Base de datos relacional escalable                  │
+│  ✅ Transacciones ACID garantizadas                     │
+│  ✅ Unicode UTF-8MB4 completo                           │
+│  ✅ Listo para producción                               │
+│  ✅ Automatización completa                             │
+│  ✅ Documentación exhaustiva                            │
 │                                                         │
-│  Archivos afectados: 6                                 │
-│  Archivos nuevos: 11                                   │
-│  Scripts creados: 3                                    │
-│  Documentación: 6 archivos                             │
+│  Archivos afectados: 6                                  │
+│  Archivos nuevos: 11                                    │
+│  Scripts creados: 3                                     │
+│  Documentación: 6 archivos                              │
 │                                                         │
-│  Tiempo de implementación: ~15 segundos (Docker)       │
-│  Tiempo de desarrollo: 100% automatizado               │
+│  Tiempo de implementación: ~15 segundos (Docker)        │
+│  Tiempo de desarrollo: 100% automatizado                │
 │                                                         │
-│  ✓ Listo para usar                                    │
-│  ✓ Listo para desarrollo                              │
-│  ✓ Listo para producción                              │
+│  ✓ Listo para usar                                      │
+│  ✓ Listo para desarrollo                                │
+│  ✓ Listo para producción                                │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
