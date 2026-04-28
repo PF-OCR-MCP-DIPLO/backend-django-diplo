@@ -18,6 +18,7 @@ from apps.extraction.providers.ocr.tesseract import (
     preprocess_image_for_ocr,
     resolve_tesseract_language,
 )
+from apps.processing.services.provider_normalization import normalize_ocr_provider
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class OcrResult:
 
 def _get_provider(provider_name):
     """Resuelve el proveedor OCR concreto según la configuración activa."""
+    provider_name = normalize_ocr_provider(provider_name)
     if provider_name == "ollama":
         if getattr(settings, "STUB_PROVIDERS", False):
             return StubVisionOCRProvider(), "vision"
@@ -204,7 +206,8 @@ def _run_tesseract(source_image, runtime_config):
 
 def _run_vision(source_image, runtime_config):
     """Ejecuta OCR mediante un proveedor visión remoto o emulado."""
-    provider, resolved_mode = _get_provider(runtime_config.ocr_provider)
+    provider_name = normalize_ocr_provider(runtime_config.ocr_provider)
+    provider, resolved_mode = _get_provider(provider_name)
     processed_path = preprocess_image_for_ocr(
         source_image.image_file,
         binarize=False,
@@ -222,7 +225,7 @@ def _run_vision(source_image, runtime_config):
         _remove_temp_path(processed_path)
 
     payload = _payload(
-        runtime_config.ocr_provider,
+        provider_name,
         runtime_config.ocr_model,
         resolved_mode,
         text,
@@ -234,7 +237,7 @@ def _run_vision(source_image, runtime_config):
 
     return {
         "text": text,
-        "provider": runtime_config.ocr_provider,
+        "provider": provider_name,
         "model": runtime_config.ocr_model,
         "mode": resolved_mode,
         "payload": payload,
@@ -342,7 +345,7 @@ def extract_raw_text(source_image, runtime_config):
     if runtime_config.ocr_mode == "vision" or use_stub:
         result, attempt = _attempt_result(
             engine="vision",
-            provider=runtime_config.ocr_provider,
+            provider=normalize_ocr_provider(runtime_config.ocr_provider),
             model=runtime_config.ocr_model,
             runner=lambda: _run_vision(source_image, runtime_config),
         )
@@ -363,7 +366,7 @@ def extract_raw_text(source_image, runtime_config):
         if tesseract_attempt.score < accept_score:
             vision_result, vision_attempt = _attempt_result(
                 engine="vision",
-                provider=runtime_config.ocr_provider,
+                provider=normalize_ocr_provider(runtime_config.ocr_provider),
                 model=runtime_config.ocr_model,
                 runner=lambda: _run_vision(source_image, runtime_config),
             )

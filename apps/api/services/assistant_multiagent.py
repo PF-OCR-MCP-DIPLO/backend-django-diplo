@@ -890,13 +890,21 @@ class IntentAgent:
             text, record_terms
         ):
             return True
-        if _contains_any(text, ("mayor valor", "menor valor", "mayor importe", "menor importe")) and _contains_any(
-            text, record_terms
-        ):
+        if _contains_any(
+            text, ("mayor valor", "menor valor", "mayor importe", "menor importe")
+        ) and _contains_any(text, record_terms):
             return True
-        if _contains_any(text, ("mes actual", "mes en curso", "este mes", "del mes", "ultimo mes", "último mes")) and _contains_any(
-            text, record_terms
-        ):
+        if _contains_any(
+            text,
+            (
+                "mes actual",
+                "mes en curso",
+                "este mes",
+                "del mes",
+                "ultimo mes",
+                "último mes",
+            ),
+        ) and _contains_any(text, record_terms):
             return True
         return _contains_any(text, action_terms) and _contains_any(
             text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
@@ -3026,7 +3034,9 @@ Instrucciones:
             )
         else:
             preview = formatted_rows
-            header = f"Encontré {rows_count} resultado(s) en {self._source_label(source)}:"
+            header = (
+                f"Encontré {rows_count} resultado(s) en {self._source_label(source)}:"
+            )
 
         return header + "\n" + "\n".join(preview)
 

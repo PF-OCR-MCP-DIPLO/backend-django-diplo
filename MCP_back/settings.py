@@ -231,7 +231,7 @@ MCP_ENABLE_MUTATIONS = os.environ.get("MCP_ENABLE_MUTATIONS", "0") == "1"
 # Enables deterministic stub OCR/LLM providers for E2E and local demos.
 STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"
 
-OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "ollama_vision")
+OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "ollama")
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama_text")
 
 # Local con python manage.py runserver:

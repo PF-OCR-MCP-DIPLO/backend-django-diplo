@@ -19,6 +19,7 @@ from apps.processing.models import (
     SourceImage,
 )
 from apps.processing.services.extraction_criteria import normalize_extraction_criteria
+from apps.processing.services.provider_normalization import normalize_ocr_provider
 
 OCR_PROVIDER_VALUES = {"ollama", "openai", "gemini", "deepseek"}
 LLM_PROVIDER_VALUES = {"ollama", "openai", "gemini", "deepseek", "anthropic"}
@@ -160,6 +161,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
     has_ocr_api_key = serializers.SerializerMethodField(read_only=True)
     has_llm_api_key = serializers.SerializerMethodField(read_only=True)
     has_assistant_api_key = serializers.SerializerMethodField(read_only=True)
+    ocr_provider = serializers.CharField(required=False)
     ocr_api_key = serializers.CharField(
         required=False, allow_blank=True, write_only=True, max_length=255
     )
@@ -212,12 +214,18 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
         )
         return data
 
+    def validate_ocr_provider(self, value):
+        """Acepta aliases legacy y los persiste en forma canónica."""
+        return normalize_ocr_provider(value)
+
     def validate(self, attrs):
         instance = self.instance
         ocr_mode = attrs.get("ocr_mode", getattr(instance, "ocr_mode", "vision"))
         ocr_provider = attrs.get(
             "ocr_provider", getattr(instance, "ocr_provider", "ollama")
         )
+        ocr_provider = normalize_ocr_provider(ocr_provider)
+        attrs["ocr_provider"] = ocr_provider
         llm_provider = attrs.get(
             "llm_provider", getattr(instance, "llm_provider", "ollama")
         )

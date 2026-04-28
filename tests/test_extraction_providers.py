@@ -4,6 +4,7 @@ import requests
 from django.core.files.base import ContentFile
 from django.test import SimpleTestCase, override_settings
 
+from apps.extraction.services.ocr_service import _get_provider
 from apps.extraction.providers.llm.ollama_text import OllamaTextLLMProvider
 from apps.extraction.providers.ocr.ollama_vision import OllamaVisionOCRProvider
 
@@ -79,6 +80,13 @@ class OllamaTextProviderTests(SimpleTestCase):
 
 
 class OllamaVisionProviderTests(SimpleTestCase):
+    @override_settings(STUB_PROVIDERS=False)
+    def test_service_accepts_legacy_ocr_provider_alias(self):
+        provider, mode = _get_provider("ollama_vision")
+
+        self.assertIsInstance(provider, OllamaVisionOCRProvider)
+        self.assertEqual(mode, "vision")
+
     def test_prompt_is_bank_consignation_specific(self):
         prompt = OllamaVisionOCRProvider().build_prompt()
         self.assertIn("consignaciones bancarias", prompt)

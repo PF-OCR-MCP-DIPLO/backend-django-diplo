@@ -88,7 +88,9 @@ class AssistantIntentQueryTests(SimpleTestCase):
             "limit": 20,
         }
         intent = self.agent.infer(
-            messages=[{"role": "user", "content": "Muéstrame el valor de las transferencias"}],
+            messages=[
+                {"role": "user", "content": "Muéstrame el valor de las transferencias"}
+            ],
             job_id=None,
             errors=0,
             query_context={"last_query": existing_query},
