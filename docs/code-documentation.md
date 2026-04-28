@@ -25,6 +25,16 @@ alineada con los contratos reales.
 - `apps/processing/services/manual_corrections.py`
 - `apps/processing/services/settings_service.py`
 - `apps/extraction/services/ocr_service.py`
+- `apps/common/middleware/request_id.py`
+- `apps/common/logging.py`
+- `apps/api/services/tool_dispatcher.py`
+- `apps/api/services/shared_tools.py`
+- `mcp_server/server.py`
+- `mcp_server/api_client.py`
+- `mcp_server/schemas.py`
+- `scripts/debug_processing_pipeline.py`
+- `scripts/init_mariadb.py`
+- `scripts/verify_mariadb.py`
 
 ## Qué debe explicar cada docstring
 
@@ -43,9 +53,9 @@ alineada con los contratos reales.
 
 ## Pendiente de documentación on-code
 
-- Profundizar docstrings de módulos MCP (`mcp_server/*`) en relación con casos de uso
-  reales del proyecto.
 - Revisar tests complejos para agregar intención cuando el nombre no sea suficiente.
+- Homogeneizar estilo de docstrings en todos los servicios del asistente para incluir
+  sección explícita de errores y efectos secundarios cuando aplique.
 
 ## Enlaces relacionados
 

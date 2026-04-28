@@ -24,6 +24,9 @@ de configuración, pero su operación en este MVP queda restringida o no impleme
 ## MCP
 
 - Componentes en `mcp_server/` y tests de paridad/contrato (`tests/test_mcp_*.py`).
+- `mcp_server/server.py` expone herramientas con control explícito de mutaciones vía
+  `MCP_ENABLE_MUTATIONS`.
+- `mcp_server/api_client.py` encapsula contrato HTTP con manejo de errores homogéneo.
 - Detalle funcional completo del uso MCP en operación real: **Pendiente de validar**.
 
 ## Dependencias de infraestructura

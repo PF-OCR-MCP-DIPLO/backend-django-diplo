@@ -27,6 +27,8 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "help": "read_only",
 }
 
+# Clasificación centralizada para imponer confirmación explícita en operaciones
+# con efectos secundarios (mutaciones de datos, reprocesos y exportaciones).
 CONFIRMATION_REQUIRED_TOOLS = {
     tool for tool, level in TOOL_RISK_LEVELS.items() if level == "requires_confirmation"
 }

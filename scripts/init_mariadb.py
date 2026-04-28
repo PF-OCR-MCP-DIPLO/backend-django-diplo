@@ -10,7 +10,6 @@ Ejecuta automáticamente:
 import os
 import sys
 import django
-import subprocess
 import time
 from pathlib import Path
 
@@ -30,7 +29,11 @@ from django.db.utils import OperationalError
 
 
 def wait_for_database(max_retries=30, retry_delay=2):
-    """Espera a que la base de datos esté disponible."""
+    """Espera conectividad DB antes de correr migraciones.
+
+    Returns:
+        bool: `True` cuando la conexión está disponible dentro del límite.
+    """
     print("⏳ Esperando a que MariaDB esté disponible...")
 
     for attempt in range(max_retries):
@@ -55,7 +58,7 @@ def wait_for_database(max_retries=30, retry_delay=2):
 
 
 def run_migrations():
-    """Ejecuta las migraciones de Django."""
+    """Ejecuta `makemigrations` y `migrate` para dejar esquema operativo."""
     print("\n📋 Ejecutando migraciones Django...")
 
     try:
@@ -74,7 +77,7 @@ def run_migrations():
 
 
 def verify_tables():
-    """Verifica la integridad de las tablas creadas."""
+    """Valida tablas/charset básicos para detectar arranque incompleto."""
     print("\n📊 Verificando integridad de tablas...")
 
     try:
@@ -103,7 +106,7 @@ def verify_tables():
 
 
 def load_initial_data():
-    """Carga datos iniciales si existen fixtures."""
+    """Carga fixtures opcionales sin bloquear el bootstrap si fallan."""
     print("\n📁 Cargando datos iniciales...")
 
     try:
@@ -143,7 +146,7 @@ def check_requirements():
 
 
 def main():
-    """Función principal."""
+    """Orquesta validación de dependencias, migraciones y verificación final."""
     print("=" * 60)
     print("Inicialización de MariaDB para MCP Backend")
     print("=" * 60)

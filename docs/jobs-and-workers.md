@@ -35,6 +35,11 @@ Explicar cómo se ejecutan corridas de procesamiento y reprocesos en el backend.
 
 No se encontraron workers de Celery/RQ/Bull para ejecución distribuida en el backend actual.
 
+## Scripts de diagnóstico operativo
+
+- `scripts/debug_processing_pipeline.py` permite perfilar etapas OCR/LLM y emitir reportes
+  para análisis de cuellos de botella sin alterar contratos API.
+
 ## Pendiente de validar
 
 - Estrategia oficial de escalamiento para producción cuando crezca el volumen de jobs.

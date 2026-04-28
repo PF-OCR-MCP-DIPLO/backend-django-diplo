@@ -36,6 +36,7 @@ respaldadas por código.
 - API protegida por `X-API-Key` (excepto health y aperturas explícitas en debug).
 - Soporte de ejecución asíncrona básica con `threading` para jobs.
 - Trazabilidad operativa por eventos (`ExtractionLog`) y snapshots de configuración.
+- Correlación de logs por request usando `RequestIdMiddleware` + `RequestIdLogFilter`.
 - OpenAPI generado con `drf-spectacular`.
 
 ## Riesgos técnicos

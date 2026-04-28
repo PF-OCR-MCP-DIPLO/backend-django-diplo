@@ -24,6 +24,18 @@ class ToolDispatcher:
         intent_name: str = "dispatcher",
         intent_summary: str = "Tool dispatch execution",
     ) -> Any:
+        """Ejecuta una herramienta bajo el flujo estándar del asistente.
+
+        Args:
+            tool: Nombre lógico de la herramienta.
+            arguments: Parámetros serializables para la herramienta.
+            job_id: Contexto opcional de corrida para herramientas de dominio.
+            intent_name: Etiqueta técnica de la intención en trazas.
+            intent_summary: Resumen humano para depuración.
+
+        Returns:
+            Respuesta cruda entregada por el ejecutor de herramientas.
+        """
         plan = AssistantPlan(
             tool=tool,
             arguments=arguments or {},
@@ -41,7 +53,11 @@ def execute_tool(
     arguments: dict[str, Any] | None = None,
     job_id: int | None = None,
 ) -> Any:
-    """Ejecuta una herramienta usando el despachador por defecto."""
+    """Atajo funcional para ejecutar herramientas sin instanciar dispatcher.
+
+    Se usa en capas de integración (por ejemplo MCP) para reutilizar las mismas
+    reglas de ejecución que la API del asistente.
+    """
     return _DEFAULT_DISPATCHER.execute(
         tool=tool,
         arguments=arguments,

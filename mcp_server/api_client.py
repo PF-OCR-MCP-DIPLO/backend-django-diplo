@@ -23,18 +23,31 @@ class BackendApiClient:
     """Encapsula las llamadas HTTP que el servidor MCP delega al backend."""
 
     def __init__(self, base_url: str | None = None, api_token: str | None = None):
+        """Inicializa cliente HTTP con parámetros overrideables por entorno.
+
+        Variables de entorno:
+            MCP_BACKEND_BASE_URL: URL base de la API (default localhost).
+            MCP_BACKEND_API_TOKEN: API key opcional para endpoints protegidos.
+            MCP_BACKEND_TIMEOUT: timeout base de requests (segundos).
+        """
         env_base = os.getenv("MCP_BACKEND_BASE_URL", "http://127.0.0.1:8000/api")
         self.base_url = (base_url or env_base).rstrip("/")
         self.api_token = api_token or os.getenv("MCP_BACKEND_API_TOKEN", "")
         self.timeout = float(os.getenv("MCP_BACKEND_TIMEOUT", "60"))
 
     def _headers(self) -> dict[str, str]:
+        """Construye headers comunes incluyendo `X-API-Key` cuando aplica."""
         headers: dict[str, str] = {}
         if self.api_token:
             headers["X-API-Key"] = self.api_token
         return headers
 
     def _handle_response(self, response: requests.Response) -> Any:
+        """Normaliza éxito/error HTTP al contrato interno del cliente.
+
+        Raises:
+            BackendApiError: para respuestas no exitosas con detalle serializado.
+        """
         if response.ok:
             if response.content:
                 return response.json()
@@ -60,6 +73,7 @@ class BackendApiClient:
         return self._handle_response(response)
 
     def upload_document(self, file_path: str) -> dict[str, Any]:
+        """Envía un `.docx` a la API backend vía multipart/form-data."""
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             raise ValueError(f"File not found: {file_path}")
@@ -82,6 +96,7 @@ class BackendApiClient:
         return self._handle_response(response)
 
     def process_job(self, job_id: int) -> dict[str, Any]:
+        """Dispara procesamiento de job con timeout extendido por operación pesada."""
         response = requests.post(
             f"{self.base_url}/jobs/{job_id}/process/",
             headers=self._headers(),
@@ -90,6 +105,7 @@ class BackendApiClient:
         return self._handle_response(response)
 
     def reprocess_failed_sources(self, job_id: int) -> dict[str, Any]:
+        """Solicita reproceso de fuentes fallidas para un job específico."""
         response = requests.post(
             f"{self.base_url}/jobs/{job_id}/reprocess-failed/",
             headers=self._headers(),
@@ -102,6 +118,7 @@ class BackendApiClient:
         job_id: int,
         source_image_id: int,
     ) -> dict[str, Any]:
+        """Solicita reproceso puntual de una imagen fuente."""
         response = requests.post(
             f"{self.base_url}/jobs/{job_id}/source-images/{source_image_id}/reprocess/",
             headers=self._headers(),
@@ -167,6 +184,7 @@ class BackendApiClient:
         errors: int = 0,
         query_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Ejecuta el endpoint de asistente con contrato compatible REST."""
         payload: dict[str, Any] = {
             "messages": messages,
             "errors": errors,

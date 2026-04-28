@@ -29,7 +29,7 @@ from django.db.utils import OperationalError
 
 
 def color_text(text, color="green"):
-    """Añade color al texto."""
+    """Aplica color ANSI para salida de terminal local."""
     colors = {
         "green": "\033[92m",
         "red": "\033[91m",
@@ -54,7 +54,7 @@ def print_section(title):
 
 
 def print_result(label, value, status="ok"):
-    """Imprime un resultado con estado."""
+    """Imprime una línea de verificación con semáforo visual."""
     if status == "ok":
         symbol = color_text("✓", "green")
     elif status == "error":
@@ -117,7 +117,7 @@ def check_charset_collation():
 
 
 def check_tables():
-    """Verifica que las tablas estén creadas."""
+    """Verifica presencia de tablas críticas para operación del backend."""
     print_section("Tablas Django")
 
     required_tables = [
@@ -154,7 +154,7 @@ def check_tables():
 
 
 def check_models():
-    """Verifica que los modelos Django estén registrados."""
+    """Confirma que modelos de dominio estén registrados en Django apps."""
     print_section("Modelos Django")
 
     try:
@@ -221,7 +221,7 @@ def check_table_statistics():
 
 
 def check_migrations():
-    """Verifica el estado de las migraciones."""
+    """Verifica estado de migraciones y alerta pendientes operativas."""
     print_section("Migraciones Django")
 
     try:
@@ -285,7 +285,7 @@ def check_django_settings():
 
 
 def main():
-    """Función principal."""
+    """Ejecuta suite de checks de instalación y retorna código de salida."""
     print_header("🔍 VERIFICACIÓN DE INSTALACIÓN MARIADB - MCP BACKEND")
 
     checks = [
