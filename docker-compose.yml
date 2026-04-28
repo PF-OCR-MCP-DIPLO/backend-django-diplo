@@ -64,9 +64,10 @@ services:
       #
       # Modo B: Ollama dentro del compose.
       #   OLLAMA_BASE_URL=http://ollama:11434
-      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
-      OLLAMA_URL: "${OLLAMA_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}/api/generate}"
-      OLLAMA_TAGS_URL: "${OLLAMA_TAGS_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}/api/tags}"
+      # Use host.docker.internal so backend running in Docker can reach Ollama on the host
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_URL: "http://host.docker.internal:11434/api/generate"
+      OLLAMA_TAGS_URL: "http://host.docker.internal:11434/api/tags"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
