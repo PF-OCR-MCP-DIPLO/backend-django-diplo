@@ -20,8 +20,8 @@ OCR_PROVIDERS = [
     ProcessingSettings.Provider.GEMINI,
     ProcessingSettings.Provider.DEEPSEEK,
 ]
-LOW_RAM_ASSISTANT_MODEL = "qwen3:1.7b"
-STANDARD_ASSISTANT_MODEL = "llama3.2:3b"
+LOW_RAM_ASSISTANT_MODEL = "qwen2.5:7b"
+STANDARD_ASSISTANT_MODEL = "llama3.1:8b"
 LLM_PROVIDERS = [
     ProcessingSettings.Provider.OLLAMA,
     ProcessingSettings.Provider.OPENAI,
@@ -158,8 +158,8 @@ def available_options():
             "low_ram": LOW_RAM_ASSISTANT_MODEL,
             "balanced": STANDARD_ASSISTANT_MODEL,
             "helper_text": (
-                "Para equipos con ~5–6 GiB libres, usa qwen3:1.7b. "
-                "Si tienes más memoria disponible, llama3.2:3b puede ser mejor para agente/tool use."
+                "Para equipos con ~5–6 GiB libres, usa qwen2.5:7b. "
+                "Si tienes más memoria disponible, llama3.1:8b puede ser mejor para agente/tool use."
             ),
         },
     }

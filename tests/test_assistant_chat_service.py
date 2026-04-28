@@ -358,4 +358,4 @@ class AssistantChatServiceTests(TestCase):
 
         self.assertEqual(response["tool"], "none")
         self.assertEqual(response["data"]["detail"], "assistant_model_too_large")
-        self.assertIn("qwen3:1.7b", response["message"])
+        self.assertIn("qwen2.5:7b", response["message"])

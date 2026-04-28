@@ -1,17 +1,55 @@
 services:
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-root_mcp_2026}"
+      MARIADB_DATABASE: "${DB_NAME:-mcp_db}"
+      MARIADB_USER: "${DB_USER:-mcp_user}"
+      MARIADB_PASSWORD: "${DB_PASSWORD:-mcp_secure_2026}"
+      MARIADB_COLLATE: utf8mb4_unicode_ci
+      MARIADB_CHARSET: utf8mb4
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: >
+      --default-storage-engine=InnoDB
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=1000
+
   backend:
     build:
       context: .
+    # Quick dev workaround: run backend as root so it can write mounted volume
+    user: root
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
       DJANGO_DEBUG: "1"
       DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
       CORS_ALLOWED_ORIGINS: "http://localhost:${FRONTEND_PORT:-5173}"
-      API_KEY: "dev"
+      # In development allow open API to avoid sending headers from local frontend
+      API_KEY: ""
+      ALLOW_OPEN_API_FOR_DEV: "1"
       STUB_PROVIDERS: "1"
       LOG_LEVEL: "INFO"
+      DATABASE_URL: "mysql://${DB_USER:-mcp_user}:${DB_PASSWORD:-mcp_secure_2026}@mariadb:3306/${DB_NAME:-mcp_db}"
+      DB_HOST: "mariadb"
+      DB_PORT: "3306"
+      DB_NAME: "${DB_NAME:-mcp_db}"
+      DB_USER: "${DB_USER:-mcp_user}"
+      DB_PASSWORD: "${DB_PASSWORD:-mcp_secure_2026}"
+    depends_on:
+      mariadb:
+        condition: service_healthy
     volumes:
+      - .:/app
       - backend_media:/app/media
 
   frontend:
@@ -28,3 +66,4 @@ services:
 
 volumes:
   backend_media:
+  mariadb_data:

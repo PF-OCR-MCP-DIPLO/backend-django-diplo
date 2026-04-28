@@ -66,13 +66,13 @@ class ProcessingSettingsAssistantTests(TestCase):
         payload = available_options()
 
         self.assertEqual(
-            payload["assistant_model_recommendations"]["low_ram"], "qwen3:1.7b"
+            payload["assistant_model_recommendations"]["low_ram"], "qwen2.5:7b"
         )
         self.assertEqual(
-            payload["assistant_model_recommendations"]["balanced"], "llama3.2:3b"
+            payload["assistant_model_recommendations"]["balanced"], "llama3.1:8b"
         )
         self.assertIn(
-            "qwen3:1.7b",
+            "qwen2.5:7b",
             payload["assistant_model_recommendations"]["helper_text"],
         )
 

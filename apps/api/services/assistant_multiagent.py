@@ -125,8 +125,8 @@ logger = logging.getLogger(__name__)
 def _assistant_memory_recommendation() -> str:
     return (
         "El modelo local configurado no cabe en la memoria disponible. "
-        "Para equipos con poca RAM usa qwen3:1.7b. "
-        "Si tienes más memoria disponible, llama3.2:3b puede ser una alternativa."
+        "Para equipos con poca RAM usa qwen2.5:7b. "
+        "Si tienes más memoria disponible, llama3.1:8b puede ser una alternativa."
     )
 
 

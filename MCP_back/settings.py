@@ -14,8 +14,12 @@ from urllib.parse import urlparse
 
 from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load local environment variables when running outside containers.
+load_dotenv(BASE_DIR / ".env")
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 DEFAULT_SECRET_KEY = "django-insecure-dev-only-change-me"
@@ -114,7 +118,8 @@ def _database_config():
     engine = engine_map.get(parsed.scheme)
     if not engine:
         raise ImproperlyConfigured("Unsupported DATABASE_URL scheme.")
-    return {
+    
+    db_config = {
         "default": {
             "ENGINE": engine,
             "NAME": parsed.path.lstrip("/"),
@@ -124,6 +129,21 @@ def _database_config():
             "PORT": str(parsed.port or ""),
         }
     }
+    
+    # Configuración específica para MySQL/MariaDB
+    if engine == "django.db.backends.mysql":
+        db_config["default"].update({
+            "OPTIONS": {
+                "charset": "utf8mb4",
+                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+                "use_unicode": True,
+                "autocommit": True,
+            },
+            "ATOMIC_REQUESTS": True,
+            "CONN_MAX_AGE": 600,
+        })
+    
+    return db_config
 
 
 DATABASES = _database_config()
@@ -207,14 +227,14 @@ STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"
 
 OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "ollama_vision")
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama_text")
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b")
-OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:e2b")
-OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "320"))
-LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
-LLM_RETRY_DELAY = int(os.environ.get("LLM_RETRY_DELAY", "2"))
-MAX_OCR_CHARS_FOR_LLM = int(os.environ.get("MAX_OCR_CHARS_FOR_LLM", "12000"))
-TESSERACT_TIMEOUT_SECONDS = int(os.environ.get("TESSERACT_TIMEOUT_SECONDS", "90"))
+OLLAMA_URL = "http://host.docker.internal:11434/api/generate"
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "llava:7b")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "180"))
+LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "2"))
+LLM_RETRY_DELAY = int(os.environ.get("LLM_RETRY_DELAY", "1"))
+MAX_OCR_CHARS_FOR_LLM = int(os.environ.get("MAX_OCR_CHARS_FOR_LLM", "8000"))
+TESSERACT_TIMEOUT_SECONDS = int(os.environ.get("TESSERACT_TIMEOUT_SECONDS", "60"))
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Diplo OCR/LLM API",

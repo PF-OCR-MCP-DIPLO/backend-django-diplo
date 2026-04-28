@@ -152,13 +152,13 @@ class AssistantTextClientTests(SimpleTestCase):
                 "hola",
                 TextGenerationConfig(
                     provider="ollama",
-                    model="llama3.2:3b",
+                    model="llama3.1:8b",
                     timeout=9,
                 ),
             )
 
         self.assertEqual(ctx.exception.code, "assistant_model_too_large")
-        self.assertIn("qwen3:1.7b", str(ctx.exception))
+        self.assertIn("qwen2.5:7b", str(ctx.exception))
 
     @override_settings(OLLAMA_URL="http://ollama.local/api/generate")
     def test_ollama_generate_maps_timeout_to_controlled_error(self):
@@ -169,7 +169,7 @@ class AssistantTextClientTests(SimpleTestCase):
                 "hola",
                 TextGenerationConfig(
                     provider="ollama",
-                    model="qwen3:1.7b",
+                    model="qwen2.5:7b",
                     timeout=3,
                 ),
             )
