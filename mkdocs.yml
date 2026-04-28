@@ -48,6 +48,10 @@ nav:
       - MCP anterior: mcp.md
       - Plan migración: migration_plan.md
       - Scope MVP: mvp_scope.md
+  - Database:
+      - Structure: docs/DATABASE_STRUCTURE.md
+      - MariaDB Quickstart: docs/MARIADB_QUICKSTART.md
+      - MariaDB Setup: docs/MARIADB_SETUP.md
 markdown_extensions:
   - admonition
   - tables
