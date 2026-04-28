@@ -240,15 +240,12 @@ class IntentAgent:
                 name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
             )
 
-        followup_intent = self._infer_followup_intent(
-            last_user_message, normalized_query_context
+        direct_intent = self._infer_direct_intent(
+            last_user_message,
+            job_id,
         )
-        if followup_intent is not None:
-            return followup_intent
-        if not last_user_message:
-            return AssistantIntent(
-                name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
-            )
+        if direct_intent is not None:
+            return direct_intent
 
         if self._looks_like_greeting(last_user_message):
             return AssistantIntent(
@@ -258,12 +255,6 @@ class IntentAgent:
                 summary="Saludo o charla general",
             )
 
-        direct_intent = self._infer_direct_intent(
-            last_user_message,
-            job_id,
-        )
-        if direct_intent is not None:
-            return direct_intent
         if self._matches_capabilities_request(last_user_message):
             return AssistantIntent(
                 name="capabilities",
@@ -271,6 +262,12 @@ class IntentAgent:
                 tool_hint="explain_capabilities",
                 summary="Pregunta de capacidades o ayuda",
             )
+
+        followup_intent = self._infer_followup_intent(
+            last_user_message, normalized_query_context
+        )
+        if followup_intent is not None:
+            return followup_intent
 
         return self._infer_with_llm(messages, job_id=job_id, errors=errors)
 
@@ -824,7 +821,27 @@ class IntentAgent:
         )
 
     def _looks_like_transaction_query(self, text: str) -> bool:
-        transaction_terms = (
+        record_terms = (
+            "registro",
+            "registros",
+            "transaccion",
+            "transacción",
+            "transacciones",
+            "transferencia",
+            "transferencias",
+            "movimiento",
+            "movimientos",
+            "deposito",
+            "depósito",
+            "depositos",
+            "depósitos",
+            "consignacion",
+            "consignación",
+            "consignaciones",
+            "referencia",
+            "referencias",
+        )
+        transaction_terms = record_terms + (
             "transaccion",
             "transacción",
             "transacciones",
@@ -869,11 +886,22 @@ class IntentAgent:
             "último mes",
             "este año",
         )
-        return _contains_any(text, transaction_terms) or (
-            _contains_any(text, action_terms)
-            and _contains_any(
-                text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
-            )
+        if _contains_any(text, transaction_terms):
+            return True
+        if _contains_any(text, ("base de datos", "base datos", "bd")) and _contains_any(
+            text, record_terms
+        ):
+            return True
+        if _contains_any(text, ("mayor valor", "menor valor", "mayor importe", "menor importe")) and _contains_any(
+            text, record_terms
+        ):
+            return True
+        if _contains_any(text, ("mes actual", "mes en curso", "este mes", "del mes", "ultimo mes", "último mes")) and _contains_any(
+            text, record_terms
+        ):
+            return True
+        return _contains_any(text, action_terms) and _contains_any(
+            text, ("$", "mes", "semana", "fecha", "abril", "enero", "marzo")
         )
 
     def _has_explicit_limit_request(self, text: str) -> bool:
@@ -3121,7 +3149,13 @@ Instrucciones:
             rows = []
         rows_count = int(meta.get("rows_count", len(rows) if isinstance(rows, list) else 0))
         if rows_count == 0:
-            return f"La consulta sobre {source} no devolvió resultados."
+            if source == "deposits":
+                return (
+                    "No encontré coincidencias en los depósitos. "
+                    "Puedes ampliar el rango de fechas, pedir los últimos registros "
+                    "o hacer una búsqueda más específica."
+                )
+            return f"No encontré coincidencias en {self._source_label(source)}."
 
         formatted_rows: list[str] = []
         for row in rows:
@@ -3149,14 +3183,23 @@ Instrucciones:
         if rows_count > 10:
             preview = formatted_rows[:10]
             header = (
-                f"Encontré {rows_count} resultados en {source}. "
+                f"Encontré {rows_count} resultados en {self._source_label(source)}. "
                 f"Aquí están los primeros {len(preview)}:"
             )
         else:
             preview = formatted_rows
-            header = f"Encontré {rows_count} resultado(s) en {source}:"
+            header = f"Encontré {rows_count} resultado(s) en {self._source_label(source)}:"
 
         return header + "\n" + "\n".join(preview)
+
+    def _source_label(self, source: str) -> str:
+        labels = {
+            "process_runs": "los jobs de procesamiento",
+            "deposits": "los depósitos",
+            "source_images": "las imágenes procesadas",
+            "logs": "los logs de procesamiento",
+        }
+        return labels.get(source, source)
 
     def _generate_text(self, prompt: str) -> str:
         return self.text_client.generate(

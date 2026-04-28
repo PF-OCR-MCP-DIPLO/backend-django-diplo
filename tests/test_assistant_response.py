@@ -117,6 +117,19 @@ class AssistantResponseAgentTests(SimpleTestCase):
         self.assertIn("100.00", response)
         self.assertIn("Encontré 2 resultado", response)
 
+    def test_compose_query_database_response_for_empty_deposits_is_helpful(self):
+        response = self._compose(
+            "query_database",
+            {
+                "source": "deposits",
+                "rows": [],
+                "meta": {"rows_count": 0},
+            },
+        )
+        self.assertIn("No encontré coincidencias", response)
+        self.assertIn("ampliar el rango de fechas", response)
+        self.assertIn("últimos registros", response)
+
     def test_compose_query_database_response_summarizes_many_results(self):
         response = self._compose(
             "query_database",
