@@ -53,7 +53,12 @@ class AssistantIntentQueryTests(SimpleTestCase):
         query = intent.arguments["query"]
         self.assertEqual(query["source"], "deposits")
         self.assertEqual(query["limit"], 200)
-        self.assertTrue(any(f["op"] in {"date_gte", "date_lte", "in_last_days"} for f in query["filters"]))
+        self.assertTrue(
+            any(
+                f["op"] in {"date_gte", "date_lte", "in_last_days"}
+                for f in query["filters"]
+            )
+        )
 
     def test_followup_valor_de_todos_uses_last_query_context(self):
         existing_query = {
@@ -114,7 +119,9 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertEqual(intent.tool_hint, "query_database")
         query = intent.arguments["query"]
         self.assertEqual(query["source"], "deposits")
-        self.assertTrue(any(f["op"] in {"date_gte", "date_lte"} for f in query["filters"]))
+        self.assertTrue(
+            any(f["op"] in {"date_gte", "date_lte"} for f in query["filters"])
+        )
 
     def test_previous_month_transactions(self):
         intent = self._infer("Cuáles fueron las transacciones del mes anterior?")
@@ -124,9 +131,7 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertTrue(any(f["op"] == "date_gte" for f in query["filters"]))
         self.assertTrue(any(f["op"] == "date_lte" for f in query["filters"]))
         self.assertTrue(
-            any(
-                f["field"] == "fecha_consignacion" for f in query["filters"]
-            )
+            any(f["field"] == "fecha_consignacion" for f in query["filters"])
         )
 
     def test_specific_month_transactions(self):

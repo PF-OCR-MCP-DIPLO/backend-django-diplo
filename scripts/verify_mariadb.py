@@ -61,28 +61,28 @@ def print_result(label, value, status="ok"):
         symbol = color_text("✗", "red")
     else:
         symbol = color_text("⚠", "yellow")
-    
+
     print(f"  {symbol} {label:<40} {value}")
 
 
 def check_database_connection():
     """Verifica la conexión a la base de datos."""
     print_section("Conexión a Base de Datos")
-    
+
     try:
         connection.ensure_connection()
         print_result("Estado de conexión", "Conectado", "ok")
-        
+
         # Obtener información de conexión
         with connection.cursor() as cursor:
             cursor.execute("SELECT DATABASE();")
             db_name = cursor.fetchone()[0]
             print_result("Base de datos", db_name, "ok")
-            
+
             cursor.execute("SELECT VERSION();")
             version = cursor.fetchone()[0]
             print_result("Versión MariaDB", version, "ok")
-        
+
         return True
     except OperationalError as e:
         print_result("Conexión", str(e), "error")
@@ -92,22 +92,24 @@ def check_database_connection():
 def check_charset_collation():
     """Verifica charset y collation."""
     print_section("Charset y Collation")
-    
+
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT @@character_set_database, @@collation_database;")
             charset, collation = cursor.fetchone()
-            
+
             charset_ok = charset == "utf8mb4"
             collation_ok = collation == "utf8mb4_unicode_ci"
-            
+
             print_result("Character Set", charset, "ok" if charset_ok else "error")
             print_result("Collation", collation, "ok" if collation_ok else "error")
-            
+
             if not charset_ok or not collation_ok:
-                print(f"\n  {color_text('⚠ Recomendación', 'yellow')}: "
-                      "Usar utf8mb4 para soporte completo de Unicode")
-            
+                print(
+                    f"\n  {color_text('⚠ Recomendación', 'yellow')}: "
+                    "Usar utf8mb4 para soporte completo de Unicode"
+                )
+
             return charset_ok and collation_ok
     except Exception as e:
         print_result("Verificación", str(e), "error")
@@ -117,7 +119,7 @@ def check_charset_collation():
 def check_tables():
     """Verifica que las tablas estén creadas."""
     print_section("Tablas Django")
-    
+
     required_tables = [
         "processing_processrun",
         "processing_sourceimage",
@@ -127,22 +129,24 @@ def check_tables():
         "auth_user",
         "django_migrations",
     ]
-    
+
     try:
         with connection.cursor() as cursor:
             cursor.execute("SHOW TABLES;")
             existing_tables = set(row[0] for row in cursor.fetchall())
-            
+
             print_result("Total de tablas", str(len(existing_tables)), "ok")
-            
+
             all_present = True
             for table in required_tables:
                 present = table in existing_tables
                 status = "ok" if present else "error"
-                print_result(f"Tabla '{table}'", "Presente" if present else "Faltante", status)
+                print_result(
+                    f"Tabla '{table}'", "Presente" if present else "Faltante", status
+                )
                 if not present:
                     all_present = False
-            
+
             return all_present
     except Exception as e:
         print_result("Verificación", str(e), "error")
@@ -152,10 +156,10 @@ def check_tables():
 def check_models():
     """Verifica que los modelos Django estén registrados."""
     print_section("Modelos Django")
-    
+
     try:
         apps.populate(django.conf.settings.INSTALLED_APPS)
-        
+
         required_models = [
             ("processing", "ProcessRun"),
             ("processing", "SourceImage"),
@@ -163,7 +167,7 @@ def check_models():
             ("processing", "ProcessingSettings"),
             ("processing", "ExtractionLog"),
         ]
-        
+
         all_present = True
         for app_label, model_name in required_models:
             try:
@@ -172,7 +176,7 @@ def check_models():
             except LookupError:
                 print_result(f"{app_label}.{model_name}", "No encontrado", "error")
                 all_present = False
-        
+
         return all_present
     except Exception as e:
         print_result("Verificación", str(e), "error")
@@ -182,7 +186,7 @@ def check_models():
 def check_table_statistics():
     """Obtiene estadísticas de las tablas."""
     print_section("Estadísticas de Tablas")
-    
+
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
@@ -197,17 +201,19 @@ def check_table_statistics():
                 ORDER BY table_rows DESC
                 LIMIT 10;
             """)
-            
+
             results = cursor.fetchall()
             if results:
-                print(f"\n  {'Tabla':<35} {'Registros':>10} {'Tamaño MB':>10} {'Collation':<20}")
+                print(
+                    f"\n  {'Tabla':<35} {'Registros':>10} {'Tamaño MB':>10} {'Collation':<20}"
+                )
                 print(f"  {'-' * 75}")
-                
+
                 for table_name, rows, size, collation in results:
                     print(f"  {table_name:<35} {rows:>10} {size:>10} {collation:<20}")
             else:
                 print(f"  {color_text('No hay tablas aún', 'yellow')}")
-            
+
             return True
     except Exception as e:
         print_result("Estadísticas", str(e), "error")
@@ -217,30 +223,36 @@ def check_table_statistics():
 def check_migrations():
     """Verifica el estado de las migraciones."""
     print_section("Migraciones Django")
-    
+
     try:
         from django.core.management import call_command
         from io import StringIO
-        
+
         out = StringIO()
         call_command("showmigrations", verbosity=2, stdout=out)
-        
+
         output = out.getvalue()
         lines = output.split("\n")
-        
+
         # Contar aplicadas vs no aplicadas
         applied = sum(1 for line in lines if "[X]" in line)
         not_applied = sum(1 for line in lines if "[ ]" in line)
-        
+
         print_result("Migraciones aplicadas", str(applied), "ok")
-        print_result("Migraciones pendientes", str(not_applied), "ok" if not_applied == 0 else "warning")
-        
+        print_result(
+            "Migraciones pendientes",
+            str(not_applied),
+            "ok" if not_applied == 0 else "warning",
+        )
+
         if not_applied == 0:
-            print(f"\n  {color_text('✓ Todas las migraciones están aplicadas', 'green')}")
+            print(
+                f"\n  {color_text('✓ Todas las migraciones están aplicadas', 'green')}"
+            )
         else:
             print(f"\n  {color_text('⚠ Hay migraciones pendientes', 'yellow')}")
             print("  Ejecutar: python manage.py migrate")
-        
+
         return not_applied == 0
     except Exception as e:
         print_result("Verificación", str(e), "error")
@@ -250,22 +262,22 @@ def check_migrations():
 def check_django_settings():
     """Verifica la configuración de Django."""
     print_section("Configuración Django")
-    
+
     try:
         from django.conf import settings
-        
+
         db_config = settings.DATABASES.get("default", {})
-        
+
         print_result("Motor de BD", db_config.get("ENGINE", "No configurado"), "ok")
         print_result("Nombre BD", db_config.get("NAME", "No configurado"), "ok")
         print_result("Host", db_config.get("HOST", "No configurado"), "ok")
         print_result("Puerto", str(db_config.get("PORT", "Por defecto")), "ok")
-        
+
         # Verificar opciones específicas de MySQL
         options = db_config.get("OPTIONS", {})
         charset = options.get("charset", "utf8mb4")
         print_result("Charset en opciones", charset, "ok")
-        
+
         return True
     except Exception as e:
         print_result("Configuración", str(e), "error")
@@ -275,7 +287,7 @@ def check_django_settings():
 def main():
     """Función principal."""
     print_header("🔍 VERIFICACIÓN DE INSTALACIÓN MARIADB - MCP BACKEND")
-    
+
     checks = [
         ("Conexión BD", check_database_connection),
         ("Charset/Collation", check_charset_collation),
@@ -285,7 +297,7 @@ def main():
         ("Configuración Django", check_django_settings),
         ("Estadísticas", check_table_statistics),
     ]
-    
+
     results = {}
     for check_name, check_func in checks:
         try:
@@ -294,25 +306,27 @@ def main():
             print_section(f"Error en {check_name}")
             print_result("Error", str(e), "error")
             results[check_name] = False
-    
+
     # Resumen final
     print_header("📋 RESUMEN")
-    
+
     passed = sum(1 for v in results.values() if v)
     total = len(results)
-    
+
     for check_name, status in results.items():
         symbol = color_text("✓", "green") if status else color_text("✗", "red")
         print(f"  {symbol} {check_name}")
-    
+
     print(f"\n  Resultado: {passed}/{total} verificaciones pasadas")
-    
+
     if passed == total:
         print(f"\n  {color_text('✓ INSTALACIÓN COMPLETADA Y VERIFICADA', 'green')}")
         print(f"\n  Próximos pasos:")
         print(f"    1. Acceder a http://localhost:8000/api/")
         print(f"    2. Subir documentos DOCX para procesamiento")
-        print(f"    3. Ver datos en MariaDB: mysql -u mcp_user -pmcp_secure_2026 -D mcp_db")
+        print(
+            f"    3. Ver datos en MariaDB: mysql -u mcp_user -pmcp_secure_2026 -D mcp_db"
+        )
         return 0
     else:
         print(f"\n  {color_text('✗ INSTALACIÓN INCOMPLETA O CON ERRORES', 'red')}")

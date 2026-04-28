@@ -15,6 +15,7 @@ from typing import Optional
 @dataclass
 class CleaningResult:
     """Resultado de la limpieza de OCR."""
+
     original_text: str
     cleaned_text: str
     corrections_applied: int
@@ -28,38 +29,44 @@ class CleaningAgent:
     # Patrones comunes de errores OCR
     COMMON_REPLACEMENTS = {
         # Caracteres mal interpretados como números
-        'O': '0', 'l': '1', 'I': '1', 'Z': '2', 'S': '5',
+        "O": "0",
+        "l": "1",
+        "I": "1",
+        "Z": "2",
+        "S": "5",
         # Moneda
-        '$': '$', '€': '€', '¢': '¢',
+        "$": "$",
+        "€": "€",
+        "¢": "¢",
     }
 
     CURRENCY_PATTERNS = [
-        (r'[$€]\s*(\d+)', r'$\1'),  # Normalizar espacios después de símbolo
-        (r'(\d+)\s*([.,])\s*(\d{2,3})', r'\1\2\3'),  # Normalizar miles/decimales
+        (r"[$€]\s*(\d+)", r"$\1"),  # Normalizar espacios después de símbolo
+        (r"(\d+)\s*([.,])\s*(\d{2,3})", r"\1\2\3"),  # Normalizar miles/decimales
     ]
 
     DATE_PATTERNS = [
-        (r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})', r'\1/\2/\3'),  # DD/MM/YYYY
-        (r'(\d{1,2})[/-](\d{1,2})[/-](\d{2})', r'\1/\2/20\3'),  # DD/MM/YY → DD/MM/YYYY
+        (r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", r"\1/\2/\3"),  # DD/MM/YYYY
+        (r"(\d{1,2})[/-](\d{1,2})[/-](\d{2})", r"\1/\2/20\3"),  # DD/MM/YY → DD/MM/YYYY
     ]
 
     TIME_PATTERNS = [
-        (r'(\d{1,2}):(\d{2})', r'\1:\2'),  # HH:MM
+        (r"(\d{1,2}):(\d{2})", r"\1:\2"),  # HH:MM
     ]
 
     REFERENCE_PATTERNS = [
-        (r'\s+', ' '),  # Múltiples espacios → uno
-        (r'[^\w\s/-]', ''),  # Caracteres especiales no alfanuméricos
+        (r"\s+", " "),  # Múltiples espacios → uno
+        (r"[^\w\s/-]", ""),  # Caracteres especiales no alfanuméricos
     ]
 
     def run(self, raw_text: str, runtime_config) -> CleaningResult:
         """
         Limpia el texto OCR.
-        
+
         Args:
             raw_text: Texto sin procesar del OCR
             runtime_config: Configuración runtime con criterios
-            
+
         Returns:
             CleaningResult con texto limpiado y estadísticas
         """
@@ -108,7 +115,9 @@ class CleaningAgent:
         elif final_length < 10:
             issues.append("Very short cleaned text (< 10 chars)")
         elif final_length < original_length * 0.5:
-            issues.append(f"Significant text loss: {original_length} → {final_length} chars")
+            issues.append(
+                f"Significant text loss: {original_length} → {final_length} chars"
+            )
 
         return CleaningResult(
             original_text=raw_text,
@@ -121,11 +130,11 @@ class CleaningAgent:
     def _normalize_whitespace(self, text: str) -> str:
         """Normaliza espacios y saltos de línea."""
         # Múltiples espacios → uno
-        text = re.sub(r' +', ' ', text)
+        text = re.sub(r" +", " ", text)
         # Saltos de línea múltiples → uno
-        text = re.sub(r'\n+', '\n', text)
+        text = re.sub(r"\n+", "\n", text)
         # Espacios alrededor de saltos de línea
-        text = re.sub(r' *\n *', '\n', text)
+        text = re.sub(r" *\n *", "\n", text)
         return text.strip()
 
     def _normalize_currency(self, text: str) -> tuple[str, int]:
@@ -169,7 +178,7 @@ class CleaningAgent:
     ) -> float:
         """
         Calcula puntaje de confianza de la limpieza.
-        
+
         Factores:
         - Conservación de longitud (no debería perder más del 60%)
         - Número de correcciones (más correcciones = menos confianza)
@@ -193,11 +202,11 @@ class CleaningAgent:
 
         # Bonus por patrones detectados
         patterns_found = 0
-        if re.search(r'\$\d+', text):
+        if re.search(r"\$\d+", text):
             patterns_found += 1  # Moneda
-        if re.search(r'\d{1,2}/\d{1,2}/\d{4}', text):
+        if re.search(r"\d{1,2}/\d{1,2}/\d{4}", text):
             patterns_found += 1  # Fecha
-        if re.search(r'\d{1,2}:\d{2}', text):
+        if re.search(r"\d{1,2}:\d{2}", text):
             patterns_found += 1  # Hora
 
         score += min(0.2, patterns_found * 0.05)

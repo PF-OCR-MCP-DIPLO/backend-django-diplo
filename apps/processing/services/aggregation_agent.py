@@ -16,6 +16,7 @@ from decimal import Decimal
 @dataclass
 class ExtractionAttempt:
     """Un intento de extracción."""
+
     attempt_number: int
     strategy_used: str
     ocr_text: str
@@ -28,6 +29,7 @@ class ExtractionAttempt:
 @dataclass
 class AggregatedResult:
     """Resultado final agregado de múltiples intentos."""
+
     best_attempt: ExtractionAttempt
     all_attempts: list[ExtractionAttempt]
     consensus_records: list  # Registros en los que concuerdan los intentos
@@ -54,7 +56,7 @@ class AggregationAgent:
     ) -> ExtractionAttempt:
         """
         Registra un intento de extracción.
-        
+
         Args:
             attempt_number: Número de intento (1, 2, 3...)
             strategy_used: Estrategia utilizada (OCR mode, model, etc)
@@ -62,7 +64,7 @@ class AggregationAgent:
             records: Registros estructurados extraídos
             confidence: Score de confianza
             error: Si hubo error, descripción
-            
+
         Returns:
             ExtractionAttempt registrado
         """
@@ -80,7 +82,7 @@ class AggregationAgent:
     def aggregate(self) -> Optional[AggregatedResult]:
         """
         Agrega todos los intentos registrados.
-        
+
         Returns:
             AggregatedResult con consenso y recomendación
         """
@@ -89,8 +91,7 @@ class AggregationAgent:
 
         # Seleccionar mejor intento
         best_attempt = max(
-            self.attempts_history,
-            key=lambda a: a.confidence if not a.error else 0.0
+            self.attempts_history, key=lambda a: a.confidence if not a.error else 0.0
         )
 
         # Identificar registros en consenso
@@ -120,7 +121,7 @@ class AggregationAgent:
     def _find_consensus(self, attempts: list) -> tuple[list, list]:
         """
         Identifica registros que aparecen en múltiples intentos.
-        
+
         Un registro está en consenso si:
         - Referencia y monto coinciden en >= 2 intentos
         - O solo hay 1 intento exitoso
@@ -160,8 +161,8 @@ class AggregationAgent:
 
     def _create_record_signature(self, record: dict) -> str:
         """Crea una firma única del registro para comparación."""
-        referencia = record.get('referencia', '').strip().upper()
-        valor = str(record.get('valor', '')).strip()
+        referencia = record.get("referencia", "").strip().upper()
+        valor = str(record.get("valor", "")).strip()
         return f"{referencia}|{valor}"
 
     def _calculate_aggregation_confidence(
@@ -189,7 +190,11 @@ class AggregationAgent:
         return max(0.0, min(1.0, score))
 
     def _generate_recommendation(
-        self, best: ExtractionAttempt, confidence: float, consensus: list, conflicts: list
+        self,
+        best: ExtractionAttempt,
+        confidence: float,
+        consensus: list,
+        conflicts: list,
     ) -> str:
         """Genera recomendación de qué hacer con los resultados."""
         # Alta confianza y consenso → ACCEPT
@@ -211,9 +216,12 @@ class AggregationAgent:
         """Retorna resumen de intentos para auditoría."""
         return {
             "total_attempts": len(self.attempts_history),
-            "successful_attempts": len([a for a in self.attempts_history if not a.error]),
+            "successful_attempts": len(
+                [a for a in self.attempts_history if not a.error]
+            ),
             "average_confidence": (
-                sum(a.confidence for a in self.attempts_history) / len(self.attempts_history)
+                sum(a.confidence for a in self.attempts_history)
+                / len(self.attempts_history)
                 if self.attempts_history
                 else 0.0
             ),

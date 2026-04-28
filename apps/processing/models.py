@@ -156,27 +156,33 @@ class ProcessingSettings(models.Model):
     @property
     def effective_ocr_model(self):
         """Devuelve ocr_model o default desde settings."""
-        return self.ocr_model or getattr(settings, 'OCR_MODEL', 'spa')
+        return self.ocr_model or getattr(settings, "OCR_MODEL", "spa")
 
     @property
     def effective_llm_model(self):
         """Devuelve llm_model o default desde settings."""
-        return self.llm_model or getattr(settings, 'LLM_MODEL', 'qwen2.5:7b')
+        return self.llm_model or getattr(settings, "LLM_MODEL", "qwen2.5:7b")
 
     @property
     def effective_assistant_model(self):
         """Devuelve assistant_model o default desde settings."""
-        return self.assistant_model or getattr(settings, 'ASSISTANT_MODEL', 'qwen2.5:7b')
+        return self.assistant_model or getattr(
+            settings, "ASSISTANT_MODEL", "qwen2.5:7b"
+        )
 
     @property
     def effective_assistant_temperature(self):
         """Devuelve assistant_temperature o default desde settings."""
-        return self.assistant_temperature or getattr(settings, 'ASSISTANT_TEMPERATURE', 0.2)
+        return self.assistant_temperature or getattr(
+            settings, "ASSISTANT_TEMPERATURE", 0.2
+        )
 
     @property
     def effective_assistant_num_predict(self):
         """Devuelve assistant_num_predict o default desde settings."""
-        return self.assistant_num_predict or getattr(settings, 'ASSISTANT_NUM_PREDICT', 256)
+        return self.assistant_num_predict or getattr(
+            settings, "ASSISTANT_NUM_PREDICT", 256
+        )
 
 
 class ExtractionLog(models.Model):

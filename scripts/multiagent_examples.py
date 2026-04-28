@@ -108,8 +108,8 @@ aggregation_agent.record_attempt(
     ocr_text="clear text from vision model",
     records=[
         {"referencia": "TRX123", "valor": "10000"},  # Consenso
-        {"referencia": "TRX456", "valor": "5000"},   # Consenso
-        {"referencia": "TRX789", "valor": "3000"},   # Nuevo
+        {"referencia": "TRX456", "valor": "5000"},  # Consenso
+        {"referencia": "TRX789", "valor": "3000"},  # Nuevo
     ],
     confidence=0.82,
 )
@@ -172,19 +172,19 @@ EXAMPLE_LOGS = [
         "raw_payload": {
             "corrections_applied": 5,
             "confidence_score": 0.85,
-        }
+        },
     },
     {
         "stage": "llm_structured",
         "raw_payload": {
             "records_count": 3,
-        }
+        },
     },
     {
         "stage": "validation_passed",
         "raw_payload": {
             "records_validated": 3,
-        }
+        },
     },
     # O en caso de retry:
     {
@@ -192,7 +192,7 @@ EXAMPLE_LOGS = [
         "raw_payload": {
             "failed_records": 1,
             "avg_confidence": 0.45,
-        }
+        },
     },
     {
         "stage": "retry_applied",
@@ -200,13 +200,13 @@ EXAMPLE_LOGS = [
             "strategy": "change_ocr_mode",
             "from": "tesseract",
             "to": "vision",
-        }
+        },
     },
     {
         "stage": "validation_passed",
         "raw_payload": {
             "records_validated": 3,
-        }
+        },
     },
     {
         "stage": "aggregation_summary",
@@ -215,7 +215,7 @@ EXAMPLE_LOGS = [
             "consensus_records": 3,
             "aggregation_confidence": 0.82,
             "recommendation": "accept",
-        }
+        },
     },
 ]
 

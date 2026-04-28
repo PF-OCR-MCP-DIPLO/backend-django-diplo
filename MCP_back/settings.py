@@ -118,7 +118,7 @@ def _database_config():
     engine = engine_map.get(parsed.scheme)
     if not engine:
         raise ImproperlyConfigured("Unsupported DATABASE_URL scheme.")
-    
+
     db_config = {
         "default": {
             "ENGINE": engine,
@@ -129,20 +129,22 @@ def _database_config():
             "PORT": str(parsed.port or ""),
         }
     }
-    
+
     # Configuración específica para MySQL/MariaDB
     if engine == "django.db.backends.mysql":
-        db_config["default"].update({
-            "OPTIONS": {
-                "charset": "utf8mb4",
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-                "use_unicode": True,
-                "autocommit": True,
-            },
-            "ATOMIC_REQUESTS": True,
-            "CONN_MAX_AGE": 600,
-        })
-    
+        db_config["default"].update(
+            {
+                "OPTIONS": {
+                    "charset": "utf8mb4",
+                    "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+                    "use_unicode": True,
+                    "autocommit": True,
+                },
+                "ATOMIC_REQUESTS": True,
+                "CONN_MAX_AGE": 600,
+            }
+        )
+
     return db_config
 
 
@@ -166,7 +168,11 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174" if DEBUG else "",
+        (
+            "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+            if DEBUG
+            else ""
+        ),
     ).split(",")
     if origin.strip()
 ]
@@ -238,7 +244,9 @@ OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "240"))
 LLM_MODEL = os.environ.get("LLM_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
 OCR_MODE = os.environ.get("OCR_MODE", "vision")
 OCR_MODEL = os.environ.get("OCR_MODEL", "spa")
-ASSISTANT_MODEL = os.environ.get("ASSISTANT_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
+ASSISTANT_MODEL = os.environ.get(
+    "ASSISTANT_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+)
 ASSISTANT_TEMPERATURE = float(os.environ.get("ASSISTANT_TEMPERATURE", "0.2"))
 ASSISTANT_NUM_PREDICT = int(os.environ.get("ASSISTANT_NUM_PREDICT", "256"))
 OCR_TEMPERATURE = float(os.environ.get("OCR_TEMPERATURE", "0.2"))

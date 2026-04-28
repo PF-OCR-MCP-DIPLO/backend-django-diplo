@@ -15,6 +15,7 @@ from typing import Optional
 
 class RetryStrategy(str, Enum):
     """Estrategias disponibles para reintentos."""
+
     CHANGE_OCR_MODE = "change_ocr_mode"  # Tesseract → Vision
     CHANGE_LLM_MODEL = "change_llm_model"  # Modelo más potente
     INCREASE_TIMEOUT = "increase_timeout"  # Más tiempo
@@ -27,6 +28,7 @@ class RetryStrategy(str, Enum):
 @dataclass
 class RetryDecision:
     """Decisión del agente de reintentos."""
+
     should_retry: bool
     strategy: RetryStrategy
     reason: str
@@ -59,14 +61,14 @@ class RetryAgent:
     ) -> RetryDecision:
         """
         Decide si reintentar y con qué estrategia.
-        
+
         Args:
             image_id: ID de la imagen siendo procesada
             error_type: Tipo de error ("ocr_failed", "extraction_failed", "validation_failed", "timeout")
             validation_result: Resultado de validación del ValidationAgent
             current_config: Configuración actual (ProcessingSettings)
             previous_attempts: Historia de intentos previos
-            
+
         Returns:
             RetryDecision con estrategia y parámetros
         """
@@ -86,7 +88,9 @@ class RetryAgent:
         if error_type == "ocr_failed":
             return self._handle_ocr_failure(image_id, retries_remaining, current_config)
         elif error_type == "extraction_failed":
-            return self._handle_extraction_failure(image_id, retries_remaining, current_config)
+            return self._handle_extraction_failure(
+                image_id, retries_remaining, current_config
+            )
         elif error_type == "validation_failed":
             return self._handle_validation_failure(
                 image_id, retries_remaining, validation_result, current_config
@@ -200,7 +204,11 @@ class RetryAgent:
         confidence = validation_result.confidence_score
 
         # Si la confianza es baja pero >30%, reintentar con mejor modelo
-        if self.CONFIDENCE_THRESHOLD_FOR_MANUAL_REVIEW < confidence < self.CONFIDENCE_THRESHOLD_FOR_AUTO_RETRY:
+        if (
+            self.CONFIDENCE_THRESHOLD_FOR_MANUAL_REVIEW
+            < confidence
+            < self.CONFIDENCE_THRESHOLD_FOR_AUTO_RETRY
+        ):
             if self.retry_counts.get(image_id, 0) < 2:
                 self.retry_counts[image_id] = self.retry_counts.get(image_id, 0) + 1
                 return RetryDecision(

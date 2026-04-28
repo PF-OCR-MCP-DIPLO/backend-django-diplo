@@ -140,9 +140,7 @@ def _normalize_query_context(raw_query_context: Any) -> dict[str, Any]:
 
 def _normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.strip().lower())
-    return "".join(
-        ch for ch in normalized if not unicodedata.combining(ch)
-    )
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
@@ -1242,7 +1240,9 @@ class IntentAgent:
             return filters
 
         if _contains_any(text, ("ultimo mes", "último mes")):
-            filters.append({"field": "fecha_consignacion", "op": "in_last_days", "value": 30})
+            filters.append(
+                {"field": "fecha_consignacion", "op": "in_last_days", "value": 30}
+            )
             return filters
 
         if "esta semana" in text or "esta semana" in text:
@@ -3119,7 +3119,9 @@ Instrucciones:
     ) -> str:
         if not isinstance(rows, list):
             rows = []
-        rows_count = int(meta.get("rows_count", len(rows) if isinstance(rows, list) else 0))
+        rows_count = int(
+            meta.get("rows_count", len(rows) if isinstance(rows, list) else 0)
+        )
         if rows_count == 0:
             return f"La consulta sobre {source} no devolvió resultados."
 
@@ -3130,15 +3132,16 @@ Instrucciones:
             cells: list[str] = []
             if "referencia" in row and row.get("referencia") is not None:
                 cells.append(f"Referencia {row['referencia']}")
-            if "fecha_consignacion" in row and row.get("fecha_consignacion") is not None:
+            if (
+                "fecha_consignacion" in row
+                and row.get("fecha_consignacion") is not None
+            ):
                 cells.append(f"Fecha {row['fecha_consignacion']}")
             if "valor" in row and row.get("valor") is not None:
                 cells.append(f"Valor {row['valor']}")
             if not cells:
                 cells = [
-                    f"{key}: {value}"
-                    for key, value in row.items()
-                    if value is not None
+                    f"{key}: {value}" for key, value in row.items() if value is not None
                 ]
             if cells:
                 formatted_rows.append(" - " + ", ".join(cells))
@@ -3275,7 +3278,11 @@ class AssistantAgent:
 
     def _sync_runtime_model(self) -> None:
         runtime = get_runtime_config()
-        model = runtime.assistant_model or runtime.llm_model or getattr(settings, 'ASSISTANT_MODEL', settings.OLLAMA_MODEL)
+        model = (
+            runtime.assistant_model
+            or runtime.llm_model
+            or getattr(settings, "ASSISTANT_MODEL", settings.OLLAMA_MODEL)
+        )
         timeout = runtime.request_timeout_seconds or settings.OLLAMA_TIMEOUT
         provider = runtime.assistant_provider or runtime.llm_provider or "ollama"
         api_key = runtime.assistant_api_key or runtime.llm_api_key or ""
@@ -3284,8 +3291,12 @@ class AssistantAgent:
         self.timeout = timeout
         self.provider = provider
         self.api_key = api_key
-        self.temperature = runtime.assistant_temperature or getattr(settings, 'ASSISTANT_TEMPERATURE', 0.2)
-        self.num_predict = runtime.assistant_num_predict or getattr(settings, 'ASSISTANT_NUM_PREDICT', 256)
+        self.temperature = runtime.assistant_temperature or getattr(
+            settings, "ASSISTANT_TEMPERATURE", 0.2
+        )
+        self.num_predict = runtime.assistant_num_predict or getattr(
+            settings, "ASSISTANT_NUM_PREDICT", 256
+        )
 
         self.intent_agent.model = model
         self.intent_agent.timeout = timeout

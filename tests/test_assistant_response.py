@@ -123,7 +123,11 @@ class AssistantResponseAgentTests(SimpleTestCase):
             {
                 "source": "deposits",
                 "rows": [
-                    {"referencia": f"REF{i}", "fecha_consignacion": "2026-04-01", "valor": "100.00"}
+                    {
+                        "referencia": f"REF{i}",
+                        "fecha_consignacion": "2026-04-01",
+                        "valor": "100.00",
+                    }
                     for i in range(12)
                 ],
                 "meta": {"rows_count": 12},
