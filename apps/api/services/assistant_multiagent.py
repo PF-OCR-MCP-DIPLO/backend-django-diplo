@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -137,11 +139,15 @@ def _normalize_query_context(raw_query_context: Any) -> dict[str, Any]:
 
 
 def _normalize_text(value: str) -> str:
-    return value.strip().lower()
+    normalized = unicodedata.normalize("NFKD", value.strip().lower())
+    return "".join(
+        ch for ch in normalized if not unicodedata.combining(ch)
+    )
 
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
-    return any(term in text for term in terms)
+    normalized_text = _normalize_text(text)
+    return any(_normalize_text(term) in normalized_text for term in terms)
 
 
 _RE_WORD_LIMIT = re.compile(r"\b(\d{1,3})\b")
@@ -225,8 +231,20 @@ class IntentAgent:
         messages: list[dict[str, str]],
         job_id: int | None,
         errors: int,
+        query_context: dict[str, Any] | None = None,
     ) -> AssistantIntent:
+        normalized_query_context = _normalize_query_context(query_context)
         last_user_message = self._last_user_message(messages)
+        if not last_user_message:
+            return AssistantIntent(
+                name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
+            )
+
+        followup_intent = self._infer_followup_intent(
+            last_user_message, normalized_query_context
+        )
+        if followup_intent is not None:
+            return followup_intent
         if not last_user_message:
             return AssistantIntent(
                 name="unknown", confidence=0.0, summary="Sin mensaje del usuario"
@@ -324,6 +342,30 @@ class IntentAgent:
                 summary="Pregunta por los ultimos registros extraidos",
             )
 
+        if self._is_lowest_value_request(text):
+            return AssistantIntent(
+                name="db_query",
+                confidence=0.97,
+                tool_hint="query_database",
+                arguments={
+                    "query": {
+                        "source": "deposits",
+                        "select": [
+                            "id",
+                            "process_run_id",
+                            "referencia",
+                            "valor",
+                            "fecha_consignacion",
+                            "hora_consignacion",
+                            "created_at",
+                        ],
+                        "order_by": [{"field": "valor", "direction": "asc"}],
+                        "limit": 1,
+                    }
+                },
+                summary="Pregunta por el registro de menor valor",
+            )
+
         if self._matches_last_record_value(text):
             return AssistantIntent(
                 name="last_record_value",
@@ -407,6 +449,108 @@ class IntentAgent:
             "último valor",
         )
         return _contains_any(text, value_terms) and _contains_any(text, record_terms)
+
+    def _infer_followup_intent(
+        self, text: str, query_context: dict[str, Any]
+    ) -> AssistantIntent | None:
+        last_query = query_context.get("last_query")
+        if not isinstance(last_query, dict):
+            return None
+
+        if not self._is_query_followup(text):
+            return None
+
+        query = copy.deepcopy(last_query)
+        if self._matches_references_followup(text):
+            query["select"] = ["referencia"]
+            query.pop("aggregations", None)
+            query.pop("group_by", None)
+        if self._matches_value_followup(text):
+            query["select"] = ["referencia", "fecha_consignacion", "valor"]
+            query.pop("aggregations", None)
+            query.pop("group_by", None)
+        if self._matches_order_desc_followup(text):
+            query["order_by"] = [{"field": "valor", "direction": "desc"}]
+        elif self._matches_order_asc_followup(text):
+            query["order_by"] = [{"field": "valor", "direction": "asc"}]
+
+        try:
+            query["limit"] = max(1, min(int(query.get("limit", 200) or 200), 200))
+        except (TypeError, ValueError):
+            query["limit"] = 200
+
+        return AssistantIntent(
+            name="db_query",
+            confidence=0.95,
+            tool_hint="query_database",
+            arguments={"query": query},
+            summary="Consulta de seguimiento basada en la ultima consulta",
+        )
+
+    def _is_query_followup(self, text: str) -> bool:
+        return any(
+            (
+                self._matches_value_followup(text),
+                self._matches_references_followup(text),
+                self._matches_order_desc_followup(text),
+                self._matches_order_asc_followup(text),
+            )
+        )
+
+    def _matches_value_followup(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "muestra su valor",
+                "muéstrame su valor",
+                "mostrar su valor",
+                "valor de todos",
+                "valor de todas",
+                "el valor de todos",
+                "el valor de todas",
+                "muestrame el valor",
+                "muéstrame el valor",
+                "mostrar el valor",
+            ),
+        )
+
+    def _matches_references_followup(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "solo referencias",
+                "solo referencia",
+                "muestrame solo referencias",
+                "muéstrame solo referencias",
+                "mostrar solo referencias",
+                "mostrar solo referencia",
+            ),
+        )
+
+    def _matches_order_desc_followup(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "de mayor a menor",
+                "ordena de mayor a menor",
+                "ordénalos de mayor a menor",
+                "ordenalos de mayor a menor",
+                "ordena los de mayor a menor",
+                "ordena por valor de mayor a menor",
+            ),
+        )
+
+    def _matches_order_asc_followup(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "de menor a mayor",
+                "ordena de menor a mayor",
+                "ordénalos de menor a mayor",
+                "ordenalos de menor a mayor",
+                "ordena los de menor a mayor",
+            ),
+        )
 
     def _matches_latest_records(self, text: str) -> bool:
         return (
@@ -577,11 +721,9 @@ class IntentAgent:
             "source": "deposits",
             "select": [
                 "id",
-                "process_run_id",
                 "referencia",
                 "valor",
                 "fecha_consignacion",
-                "hora_consignacion",
                 "created_at",
             ],
             "filters": [],
@@ -592,6 +734,12 @@ class IntentAgent:
         date_filters = self._extract_transaction_date_filters(text)
         if date_filters:
             query["filters"].extend(date_filters)
+
+        error_filters = self._extract_error_observation_filters(text)
+        if error_filters:
+            query["filters"].extend(error_filters)
+            if "observations" not in query["select"]:
+                query["select"].append("observations")
 
         amount_filters = self._extract_transaction_amount_filters(text)
         if amount_filters:
@@ -642,7 +790,13 @@ class IntentAgent:
                 "created_at",
             ]
 
-        if self._is_sort_by_amount_desc_request(text):
+        if self._is_highest_value_request(text):
+            query["order_by"] = [{"field": "valor", "direction": "desc"}]
+            query["limit"] = 1
+        elif self._is_lowest_value_request(text):
+            query["order_by"] = [{"field": "valor", "direction": "asc"}]
+            query["limit"] = 1
+        elif self._is_sort_by_amount_desc_request(text):
             query["order_by"] = [{"field": "valor", "direction": "desc"}]
         elif self._is_sort_by_amount_asc_request(text):
             query["order_by"] = [{"field": "valor", "direction": "asc"}]
@@ -672,11 +826,19 @@ class IntentAgent:
     def _looks_like_transaction_query(self, text: str) -> bool:
         transaction_terms = (
             "transaccion",
+            "transacción",
             "transacciones",
             "transferencia",
             "transferencias",
             "movimiento",
             "movimientos",
+            "deposito",
+            "depósito",
+            "depositos",
+            "depósitos",
+            "consignacion",
+            "consignación",
+            "consignaciones",
             "referencia",
             "referencias",
             "cuanto movi",
@@ -727,6 +889,9 @@ class IntentAgent:
                 "todas las transacciones",
                 "todos los movimientos",
                 "todas las transferencias",
+                "todos los valores",
+                "todos los depósitos",
+                "todos los depositos",
             ),
         )
 
@@ -735,6 +900,95 @@ class IntentAgent:
             text,
             ("mas altas", "más altas", "mas grandes", "más grandes", "top"),
         )
+
+    def _is_highest_value_request(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "mayor valor",
+                "mayor importe",
+                "transacción de mayor valor",
+                "transaccion de mayor valor",
+                "la transacción más alta",
+                "transacciones más altas",
+                "qué transacción tiene mayor valor",
+                "qué transacción es la de mayor valor",
+            ),
+        )
+
+    def _extract_error_observation_filters(self, text: str) -> list[dict[str, Any]]:
+        filters: list[dict[str, Any]] = []
+        if _contains_any(
+            text,
+            (
+                "error en fecha",
+                "fecha invalida",
+                "fecha inválida",
+                "fecha incorrecta",
+                "fecha de consignacion incorrecta",
+                "fecha de consignación incorrecta",
+            ),
+        ):
+            filters.append(
+                {
+                    "field": "observations",
+                    "op": "icontains",
+                    "value": "fecha",
+                }
+            )
+
+        if _contains_any(
+            text,
+            (
+                "error en valor",
+                "monto invalido",
+                "monto inválido",
+                "valor invalido",
+                "valor inválido",
+                "valor incorrecto",
+                "importe invalido",
+                "importe inválido",
+                "importe incorrecto",
+            ),
+        ):
+            filters.append(
+                {
+                    "field": "observations",
+                    "op": "icontains",
+                    "value": "valor",
+                }
+            )
+
+        if _contains_any(
+            text,
+            (
+                "error en referencia",
+                "referencia invalida",
+                "referencia inválida",
+                "referencia incorrecta",
+            ),
+        ):
+            filters.append(
+                {
+                    "field": "observations",
+                    "op": "icontains",
+                    "value": "referencia",
+                }
+            )
+
+        if not filters and _contains_any(
+            text,
+            ("error", "errores", "inconsistencias", "con inconsistencias"),
+        ):
+            filters.append(
+                {
+                    "field": "observations",
+                    "op": "icontains",
+                    "value": "error",
+                }
+            )
+
+        return filters
 
     def _is_references_only_request(self, text: str) -> bool:
         return "referencia" in text and _contains_any(
@@ -755,6 +1009,10 @@ class IntentAgent:
                 "cuánto es la cuenta en total",
                 "suma de transacciones",
                 "suma total",
+                "total del valor de las transacciones",
+                "valor total de las transacciones",
+                "total del monto de las transacciones",
+                "monto total de las transacciones",
                 "cuanto movi",
                 "cuánto moví",
                 "cuanto movi en estos dias",
@@ -801,6 +1059,21 @@ class IntentAgent:
 
     def _is_sort_by_amount_asc_request(self, text: str) -> bool:
         return _contains_any(text, ("de menor a mayor valor", "menor a mayor valor"))
+
+    def _is_lowest_value_request(self, text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "menor valor",
+                "valor mas bajo",
+                "valor más bajo",
+                "registro de menor valor",
+                "transaccion de menor valor",
+                "transacción de menor valor",
+                "importe mas bajo",
+                "importe más bajo",
+            ),
+        )
 
     def _is_sort_by_date_desc_request(self, text: str) -> bool:
         return _contains_any(
@@ -909,8 +1182,67 @@ class IntentAgent:
             )
             return filters
 
-        if "ultimo mes" in text or "último mes" in text:
-            filters.append({"field": "created_at", "op": "in_last_days", "value": 30})
+        if _contains_any(
+            text,
+            (
+                "mes actual",
+                "mes en curso",
+                "este mes",
+            ),
+        ) or (
+            _contains_any(text, ("del mes",))
+            and not _contains_any(
+                text,
+                ("mes anterior", "mes pasado", "ultimo mes", "último mes"),
+            )
+        ):
+            start = today.replace(day=1)
+            filters.extend(
+                [
+                    {
+                        "field": "fecha_consignacion",
+                        "op": "date_gte",
+                        "value": start.isoformat(),
+                    },
+                    {
+                        "field": "fecha_consignacion",
+                        "op": "date_lte",
+                        "value": today.isoformat(),
+                    },
+                ]
+            )
+            return filters
+
+        if _contains_any(text, ("mes anterior", "mes previo", "mes pasado")):
+            if today.month == 1:
+                previous_year = today.year - 1
+                previous_month = 12
+            else:
+                previous_year = today.year
+                previous_month = today.month - 1
+            start = date(previous_year, previous_month, 1)
+            if previous_month == 12:
+                end = date(previous_year, 12, 31)
+            else:
+                end = date(previous_year, previous_month + 1, 1) - timedelta(days=1)
+            filters.extend(
+                [
+                    {
+                        "field": "fecha_consignacion",
+                        "op": "date_gte",
+                        "value": start.isoformat(),
+                    },
+                    {
+                        "field": "fecha_consignacion",
+                        "op": "date_lte",
+                        "value": end.isoformat(),
+                    },
+                ]
+            )
+            return filters
+
+        if _contains_any(text, ("ultimo mes", "último mes")):
+            filters.append({"field": "fecha_consignacion", "op": "in_last_days", "value": 30})
             return filters
 
         if "esta semana" in text or "esta semana" in text:
@@ -1566,6 +1898,7 @@ _QUERY_SOURCES: dict[str, dict[str, Any]] = {
             "hora_consignacion",
             "referencia",
             "valor",
+            "observations",
             "is_current_month",
             "created_at",
             "process_run__status",
@@ -2679,15 +3012,14 @@ class ResponseAgent:
             meta = tool_payload.get("meta") or {}
             rows = tool_payload.get("rows", [])
 
-            # Special handling for count aggregations
             if meta.get("has_aggregations") and len(rows) == 1:
                 row = rows[0]
                 if "total_records" in row:
                     count = row["total_records"]
                     return f"Actualmente hay {count} registros en total."
+                return self._format_aggregated_query_database_response(row)
 
-            rows_count = meta.get("rows_count", 0)
-            return f"Ejecuté una consulta sobre {source} y obtuve {rows_count} resultado(s)."
+            return self._format_query_database_rows(source, rows, meta)
 
         if plan.tool == "query_database_sql" and isinstance(tool_payload, dict):
             detail = tool_payload.get("detail")
@@ -2770,6 +3102,61 @@ Instrucciones:
             prompt += f"\n\nTarea orientada:\n- {task.name}\n- {task.summary}\n\nContexto de tarea:\n{self._safe_json_dump(task_context)}"
         response = self._generate_text(prompt)
         return response.strip() or "No pude generar una respuesta en este momento."
+
+    def _format_aggregated_query_database_response(self, row: dict[str, Any]) -> str:
+        parts = []
+        for key, value in row.items():
+            if value is None:
+                continue
+            label = key.replace("_", " ")
+            parts.append(f"{label} {value}")
+        if parts:
+            return "Resultado agregado: " + ", ".join(parts) + "."
+        return "Ejecuté la consulta agregada y obtuve resultados."
+
+    def _format_query_database_rows(
+        self, source: str, rows: Any, meta: dict[str, Any]
+    ) -> str:
+        if not isinstance(rows, list):
+            rows = []
+        rows_count = int(meta.get("rows_count", len(rows) if isinstance(rows, list) else 0))
+        if rows_count == 0:
+            return f"La consulta sobre {source} no devolvió resultados."
+
+        formatted_rows: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            cells: list[str] = []
+            if "referencia" in row and row.get("referencia") is not None:
+                cells.append(f"Referencia {row['referencia']}")
+            if "fecha_consignacion" in row and row.get("fecha_consignacion") is not None:
+                cells.append(f"Fecha {row['fecha_consignacion']}")
+            if "valor" in row and row.get("valor") is not None:
+                cells.append(f"Valor {row['valor']}")
+            if not cells:
+                cells = [
+                    f"{key}: {value}"
+                    for key, value in row.items()
+                    if value is not None
+                ]
+            if cells:
+                formatted_rows.append(" - " + ", ".join(cells))
+
+        if not formatted_rows:
+            return f"Ejecuté una consulta sobre {source} y obtuve {rows_count} resultado(s)."
+
+        if rows_count > 10:
+            preview = formatted_rows[:10]
+            header = (
+                f"Encontré {rows_count} resultados en {source}. "
+                f"Aquí están los primeros {len(preview)}:"
+            )
+        else:
+            preview = formatted_rows
+            header = f"Encontré {rows_count} resultado(s) en {source}:"
+
+        return header + "\n" + "\n".join(preview)
 
     def _generate_text(self, prompt: str) -> str:
         return self.text_client.generate(
@@ -3000,6 +3387,7 @@ class AssistantAgent:
                 messages,
                 job_id=job_id,
                 errors=errors,
+                query_context=normalized_query_context,
             )
             plan = self.planner_agent.plan(
                 intent,
@@ -3089,6 +3477,27 @@ class AssistantAgent:
                 task=task,
                 task_context=task_context,
             )
+            result_query_context = clear_pending_action(normalized_query_context)
+            if (
+                plan.tool == "query_database"
+                and isinstance(tool_payload, dict)
+                and not tool_payload.get("detail")
+            ):
+                last_query = plan.arguments.get("query")
+                if isinstance(last_query, dict):
+                    result_query_context = dict(result_query_context)
+                    result_query_context["last_query"] = copy.deepcopy(last_query)
+                    result_query_context["last_source"] = str(
+                        last_query.get("source", "deposits")
+                    )
+                    rows = tool_payload.get("rows")
+                    if isinstance(rows, list):
+                        result_query_context["last_rows_preview"] = [
+                            row for row in rows[:5] if isinstance(row, dict)
+                        ]
+                        result_query_context["last_rows_count"] = int(
+                            tool_payload.get("meta", {}).get("rows_count", len(rows))
+                        )
             return {
                 "reply": reply,
                 "message": reply,
@@ -3096,7 +3505,7 @@ class AssistantAgent:
                 "data": tool_payload,
                 "task": task.name,
                 "task_context": task_context,
-                "query_context": clear_pending_action(normalized_query_context),
+                "query_context": result_query_context,
             }
         except AssistantProviderError as exc:
             logger.warning(

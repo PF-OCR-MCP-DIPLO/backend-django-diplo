@@ -1,7 +1,9 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
 from apps.api.services.assistant_multiagent import AssistantPlan, ToolExecutionAgent
 from apps.api.services.tool_risk import get_tool_risk_level, tool_requires_confirmation
@@ -37,6 +39,30 @@ class AssistantToolExecutionTests(TestCase):
             valor=Decimal("100000.00"),
             fecha_consignacion="2026-04-22",
             hora_consignacion="08:30",
+            observations=["ok"],
+            created_at=timezone.now() - timedelta(days=40),
+        )
+        self.deposit_error_value = ExtractedDeposit.objects.create(
+            process_run=self.process_run,
+            source_image=self.source_image,
+            sequence_index=2,
+            referencia="REFTOOL002",
+            valor=Decimal("200000.00"),
+            fecha_consignacion="2026-04-15",
+            hora_consignacion="09:15",
+            observations=["error en valor"],
+            created_at=timezone.now() - timedelta(days=10),
+        )
+        self.deposit_error_date = ExtractedDeposit.objects.create(
+            process_run=self.process_run,
+            source_image=self.source_image,
+            sequence_index=3,
+            referencia="REFTOOL003",
+            valor=Decimal("50000.00"),
+            fecha_consignacion="2026-03-28",
+            hora_consignacion="10:45",
+            observations=["fecha invalida"],
+            created_at=timezone.now(),
         )
         ExtractionLog.objects.create(
             process_run=self.process_run,
@@ -181,6 +207,126 @@ class AssistantToolExecutionTests(TestCase):
         self.assertEqual(payload["rows"][0]["referencia"], "REFTOOL001")
         self.assertEqual(payload["meta"]["rows_count"], 1)
         self.assertTrue(payload["meta"]["warnings"])
+
+    def test_query_database_returns_highest_value_transaction(self):
+        payload = self._execute(
+            "query_database",
+            {
+                "query": {
+                    "source": "deposits",
+                    "select": ["referencia", "valor", "fecha_consignacion"],
+                    "order_by": [{"field": "valor", "direction": "desc"}],
+                    "limit": 1,
+                }
+            },
+        )
+        self.assertEqual(payload["rows"][0]["referencia"], "REFTOOL002")
+        self.assertEqual(payload["rows"][0]["valor"], "200000.00")
+        self.assertEqual(payload["meta"]["rows_count"], 1)
+
+    def test_query_database_filters_by_observations_for_errors(self):
+        payload = self._execute(
+            "query_database",
+            {
+                "query": {
+                    "source": "deposits",
+                    "select": ["referencia", "valor", "fecha_consignacion"],
+                    "filters": [
+                        {
+                            "field": "observations",
+                            "op": "icontains",
+                            "value": "fecha",
+                        }
+                    ],
+                }
+            },
+        )
+        self.assertEqual(payload["meta"]["rows_count"], 1)
+        self.assertEqual(payload["rows"][0]["referencia"], "REFTOOL003")
+
+    def test_query_database_supports_current_month_filters(self):
+        payload = self._execute(
+            "query_database",
+            {
+                "query": {
+                    "source": "deposits",
+                    "select": ["referencia", "valor", "fecha_consignacion"],
+                    "filters": [
+                        {
+                            "field": "created_at",
+                            "op": "date_gte",
+                            "value": (timezone.localdate().replace(day=1)).isoformat(),
+                        }
+                    ],
+                }
+            },
+        )
+        self.assertEqual(payload["source"], "deposits")
+        self.assertTrue(payload["meta"]["rows_count"] >= 1)
+
+    def test_query_database_supports_last_month_total(self):
+        payload = self._execute(
+            "query_database",
+            {
+                "query": {
+                    "source": "deposits",
+                    "aggregations": [
+                        {"type": "sum", "field": "valor", "as": "total_valor"}
+                    ],
+                    "filters": [
+                        {"field": "created_at", "op": "in_last_days", "value": 30}
+                    ],
+                }
+            },
+        )
+        self.assertEqual(payload["meta"]["rows_count"], 1)
+        self.assertEqual(payload["rows"][0]["total_valor"], "250000.00")
+
+    def test_query_database_supports_specific_month_ranges(self):
+        start_date = self.deposit_error_value.created_at.date().isoformat()
+        end_date = self.deposit_error_date.created_at.date().isoformat()
+        payload = self._execute(
+            "query_database",
+            {
+                "query": {
+                    "source": "deposits",
+                    "select": ["referencia", "valor", "fecha_consignacion"],
+                    "filters": [
+                        {
+                            "field": "created_at",
+                            "op": "date_gte",
+                            "value": start_date,
+                        },
+                        {
+                            "field": "created_at",
+                            "op": "date_lte",
+                            "value": end_date,
+                        },
+                    ],
+                    "order_by": [{"field": "created_at", "direction": "desc"}],
+                }
+            },
+        )
+        self.assertEqual(payload["rows"][0]["referencia"], "REFTOOL003")
+        self.assertEqual(payload["rows"][1]["referencia"], "REFTOOL002")
+
+    def test_query_database_supports_error_reference_filters(self):
+        payload = self._execute(
+            "query_database",
+            {
+                "query": {
+                    "source": "deposits",
+                    "filters": [
+                        {
+                            "field": "observations",
+                            "op": "icontains",
+                            "value": "referencia",
+                        }
+                    ],
+                }
+            },
+        )
+        self.assertEqual(payload["meta"]["rows_count"], 0)
 
     def test_query_database_supports_grouping_and_aggregations(self):
         payload = self._execute(

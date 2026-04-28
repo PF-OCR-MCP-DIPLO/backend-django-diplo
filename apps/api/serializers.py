@@ -345,14 +345,14 @@ class AssistantChatSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"No more than {self.max_messages} messages are allowed."
             )
-        allowed_roles = {"user", "assistant"}
+        allowed_roles = {"user", "assistant", "system"}
         cleaned: list[dict[str, str]] = []
         for item in value:
             role = str(item.get("role") or "").strip()
             content = item.get("content")
             if role not in allowed_roles:
                 raise serializers.ValidationError(
-                    f"Invalid message role '{role}'. Allowed: user, assistant."
+                    f"Invalid message role '{role}'. Allowed: user, assistant, system."
                 )
             if not isinstance(content, str):
                 raise serializers.ValidationError(
