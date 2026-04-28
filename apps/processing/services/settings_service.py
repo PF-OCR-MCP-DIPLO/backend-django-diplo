@@ -13,6 +13,7 @@ from apps.processing.services.ollama_models import (
     get_available_models,
     list_installed_models,
 )
+from apps.processing.services.provider_normalization import normalize_ocr_provider
 
 OCR_PROVIDERS = [
     ProcessingSettings.Provider.OLLAMA,
@@ -84,6 +85,7 @@ def get_runtime_config():
     resolved_ocr_provider = (
         getattr(settings, "OCR_PROVIDER", config.ocr_provider) or config.ocr_provider
     )
+    resolved_ocr_provider = normalize_ocr_provider(resolved_ocr_provider)
 
     # Preferimos el modelo vision si el modo es vision/auto y el valor guardado
     # todavía apunta al lenguaje de Tesseract.

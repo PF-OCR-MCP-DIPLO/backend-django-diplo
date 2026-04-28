@@ -60,6 +60,26 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertIn("fields", runtime.extraction_criteria)
         self.assertFalse(runtime.assistant_show_debug_details)
 
+    @override_settings(OCR_PROVIDER="ollama_vision")
+    def test_runtime_config_normalizes_legacy_ocr_provider_alias(self):
+        from apps.processing.services.settings_service import get_runtime_config
+
+        runtime = get_runtime_config()
+
+        self.assertEqual(runtime.ocr_provider, "ollama")
+
+    def test_serializer_accepts_legacy_ocr_provider_alias(self):
+        settings_obj = get_or_create_processing_settings()
+        serializer = ProcessingSettingsSerializer(
+            settings_obj,
+            data={"ocr_provider": "ollama_vision"},
+            partial=True,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        updated = serializer.save()
+        self.assertEqual(updated.ocr_provider, "ollama")
+
     def test_available_options_expose_low_ram_assistant_recommendation(self):
         from apps.processing.services.settings_service import available_options
 
