@@ -21,6 +21,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 
 COPY . /app
 
+RUN apt-get update && apt-get install -y tesseract-ocr libtesseract-dev tesseract-ocr-spa && rm -rf /var/lib/apt/lists/*
 RUN useradd -m appuser
 USER appuser
 

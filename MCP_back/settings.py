@@ -168,7 +168,11 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173" if DEBUG else "",
+        (
+            "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+            if DEBUG
+            else ""
+        ),
     ).split(",")
     if origin.strip()
 ]
@@ -262,8 +266,23 @@ OLLAMA_TAGS_URL = os.environ.get(
 # - qwen3.5:latest
 # - gemma3:1b-it-qat
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
-OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "llava:7b")
-OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "180"))
+OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:e2b")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "240"))
+
+# =====================================================
+# Modelos LLM / OCR / Assistant (configurables por entorno)
+# =====================================================
+LLM_MODEL = os.environ.get("LLM_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
+OCR_MODE = os.environ.get("OCR_MODE", "vision")
+OCR_MODEL = os.environ.get("OCR_MODEL", "spa")
+ASSISTANT_MODEL = os.environ.get(
+    "ASSISTANT_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+)
+ASSISTANT_TEMPERATURE = float(os.environ.get("ASSISTANT_TEMPERATURE", "0.2"))
+ASSISTANT_NUM_PREDICT = int(os.environ.get("ASSISTANT_NUM_PREDICT", "256"))
+OCR_TEMPERATURE = float(os.environ.get("OCR_TEMPERATURE", "0.2"))
+OCR_NUM_PREDICT = int(os.environ.get("OCR_NUM_PREDICT", "128"))
+
 LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "2"))
 LLM_RETRY_DELAY = int(os.environ.get("LLM_RETRY_DELAY", "1"))
 MAX_OCR_CHARS_FOR_LLM = int(os.environ.get("MAX_OCR_CHARS_FOR_LLM", "8000"))

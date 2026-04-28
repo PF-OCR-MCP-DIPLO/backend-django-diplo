@@ -93,6 +93,50 @@ class AssistantResponseAgentTests(SimpleTestCase):
             "sin datos",
         )
 
+    def test_compose_query_database_response_lists_key_columns(self):
+        response = self._compose(
+            "query_database",
+            {
+                "source": "deposits",
+                "rows": [
+                    {
+                        "referencia": "REF001",
+                        "fecha_consignacion": "2026-04-01",
+                        "valor": "100.00",
+                    },
+                    {
+                        "referencia": "REF002",
+                        "fecha_consignacion": "2026-04-02",
+                        "valor": "200.00",
+                    },
+                ],
+                "meta": {"rows_count": 2},
+            },
+        )
+        self.assertIn("REF001", response)
+        self.assertIn("100.00", response)
+        self.assertIn("Encontré 2 resultado", response)
+
+    def test_compose_query_database_response_summarizes_many_results(self):
+        response = self._compose(
+            "query_database",
+            {
+                "source": "deposits",
+                "rows": [
+                    {
+                        "referencia": f"REF{i}",
+                        "fecha_consignacion": "2026-04-01",
+                        "valor": "100.00",
+                    }
+                    for i in range(12)
+                ],
+                "meta": {"rows_count": 12},
+            },
+        )
+        self.assertIn("primeros 10", response)
+        self.assertIn("REF0", response)
+        self.assertNotIn("REF11", response)
+
     def test_compose_sql_totals_and_last_record(self):
         self.assertIn(
             "5 resultado",

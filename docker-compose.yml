@@ -33,7 +33,6 @@ services:
       DJANGO_DEBUG: "1"
       DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
       CORS_ALLOWED_ORIGINS: "http://localhost:${FRONTEND_PORT:-5173}"
-
       API_KEY: "${API_KEY:-}"
       ALLOW_OPEN_API_FOR_DEV: "${ALLOW_OPEN_API_FOR_DEV:-1}"
 
@@ -41,7 +40,19 @@ services:
       STUB_PROVIDERS: "${STUB_PROVIDERS:-0}"
 
       LOG_LEVEL: "INFO"
-
+      # Modelos LLM / OCR / Assistant (variables de entorno)
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:7b}"
+      OLLAMA_VISION_MODEL: "${OLLAMA_VISION_MODEL:-gemma4:e2b}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5:7b}"
+      OCR_MODE: "${OCR_MODE:-auto}"
+      OCR_MODEL: "${OCR_MODEL:-spa}"
+      OCR_PROVIDER: "${OCR_PROVIDER:-ollama}"
+      ASSISTANT_MODEL: "${ASSISTANT_MODEL:-qwen2.5:7b}"
+      ASSISTANT_TEMPERATURE: "${ASSISTANT_TEMPERATURE:-0.2}"
+      ASSISTANT_NUM_PREDICT: "${ASSISTANT_NUM_PREDICT:-256}"
+      OCR_TEMPERATURE: "${OCR_TEMPERATURE:-0.2}"
+      OCR_NUM_PREDICT: "${OCR_NUM_PREDICT:-128}"
+      OLLAMA_TIMEOUT: "${OLLAMA_TIMEOUT:-180}"
       DATABASE_URL: "mysql://${DB_USER:-mcp_user}:${DB_PASSWORD:-mcp_secure_2026}@mariadb:3306/${DB_NAME:-mcp_db}"
       DB_HOST: "mariadb"
       DB_PORT: "3306"
@@ -57,9 +68,6 @@ services:
       OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
       OLLAMA_URL: "${OLLAMA_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}/api/generate}"
       OLLAMA_TAGS_URL: "${OLLAMA_TAGS_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}/api/tags}"
-      OLLAMA_MODEL: "${OLLAMA_MODEL:-gemma4:e2b}"
-      OLLAMA_VISION_MODEL: "${OLLAMA_VISION_MODEL:-gemma4:e2b}"
-      OLLAMA_TIMEOUT: "${OLLAMA_TIMEOUT:-180}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

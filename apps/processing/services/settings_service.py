@@ -57,11 +57,13 @@ def get_or_create_processing_settings():
     defaults = {
         "ocr_mode": ProcessingSettings.OCRMode.VISION,
         "ocr_provider": ProcessingSettings.Provider.OLLAMA,
-        "ocr_model": settings.OLLAMA_VISION_MODEL,
+        "ocr_model": getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b"),
         "llm_provider": ProcessingSettings.Provider.OLLAMA,
-        "llm_model": settings.OLLAMA_MODEL,
+        "llm_model": getattr(settings, "LLM_MODEL", settings.OLLAMA_MODEL),
         "assistant_provider": ProcessingSettings.Provider.OLLAMA,
-        "assistant_model": LOW_RAM_ASSISTANT_MODEL,
+        "assistant_model": getattr(
+            settings, "ASSISTANT_MODEL", LOW_RAM_ASSISTANT_MODEL
+        ),
         "assistant_show_debug_details": False,
         "request_timeout_seconds": settings.OLLAMA_TIMEOUT,
         "extraction_criteria": default_extraction_criteria(),
@@ -75,10 +77,37 @@ def get_or_create_processing_settings():
 def get_runtime_config():
     """Construye una vista inmutable de la configuración activa."""
     config = get_or_create_processing_settings()
+
+    resolved_ocr_mode = (
+        getattr(settings, "OCR_MODE", config.ocr_mode) or config.ocr_mode
+    )
+    resolved_ocr_provider = (
+        getattr(settings, "OCR_PROVIDER", config.ocr_provider) or config.ocr_provider
+    )
+
+    # Preferimos el modelo vision si el modo es vision/auto y el valor guardado
+    # todavía apunta al lenguaje de Tesseract.
+    resolved_ocr_model = (
+        getattr(settings, "OCR_MODEL", config.ocr_model) or ""
+    ).strip()
+    if resolved_ocr_mode in (
+        ProcessingSettings.OCRMode.VISION,
+        ProcessingSettings.OCRMode.AUTO,
+    ):
+        if (
+            not resolved_ocr_model
+            or ":" not in resolved_ocr_model
+            or resolved_ocr_model.lower() == "spa"
+        ):
+            resolved_ocr_model = getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b")
+    elif resolved_ocr_mode == ProcessingSettings.OCRMode.TESSERACT:
+        if not resolved_ocr_model:
+            resolved_ocr_model = getattr(settings, "OCR_MODEL", "spa")
+
     return RuntimeProcessingConfig(
-        ocr_mode=config.ocr_mode,
-        ocr_provider=config.ocr_provider,
-        ocr_model=config.ocr_model,
+        ocr_mode=resolved_ocr_mode,
+        ocr_provider=resolved_ocr_provider,
+        ocr_model=resolved_ocr_model,
         llm_provider=config.llm_provider,
         llm_model=config.llm_model,
         assistant_provider=config.assistant_provider,
@@ -130,7 +159,7 @@ def available_options():
         settings.OLLAMA_MODEL,
         "qwen2.5:3b",
     ]
-    fallback_ocr_models = [settings.OLLAMA_VISION_MODEL, "llava:7b", "moondream"]
+    fallback_ocr_models = [settings.OLLAMA_VISION_MODEL, "gemma4:e2b", "moondream"]
     provider_models = {
         "ollama": {
             "ocr": ollama_models or fallback_ocr_models,

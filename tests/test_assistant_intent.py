@@ -38,6 +38,131 @@ class AssistantIntentQueryTests(SimpleTestCase):
         self.assertEqual(query["order_by"][0]["field"], "created_at")
         self.assertEqual(query["order_by"][0]["direction"], "desc")
 
+    def test_all_transactions_query(self):
+        intent = self._infer("Muéstrame todas las transacciones")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertEqual(query["limit"], 200)
+        self.assertEqual(query["order_by"][0]["field"], "created_at")
+        self.assertEqual(query["order_by"][0]["direction"], "desc")
+
+    def test_all_month_values_query(self):
+        intent = self._infer("Muéstrame todos los valores del mes")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertEqual(query["limit"], 200)
+        self.assertTrue(
+            any(
+                f["op"] in {"date_gte", "date_lte", "in_last_days"}
+                for f in query["filters"]
+            )
+        )
+
+    def test_followup_valor_de_todos_uses_last_query_context(self):
+        existing_query = {
+            "source": "deposits",
+            "filters": [{"field": "created_at", "op": "in_last_days", "value": 30}],
+            "order_by": [{"field": "created_at", "direction": "desc"}],
+            "limit": 200,
+        }
+        intent = self.agent.infer(
+            messages=[{"role": "user", "content": "Muéstrame el valor de todos"}],
+            job_id=None,
+            errors=0,
+            query_context={"last_query": existing_query},
+        )
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["select"], ["referencia", "fecha_consignacion", "valor"])
+        self.assertEqual(query["filters"], existing_query["filters"])
+        self.assertEqual(query["order_by"], existing_query["order_by"])
+        self.assertEqual(query["limit"], 200)
+
+    def test_followup_no_longer_returns_last_record_value(self):
+        existing_query = {
+            "source": "deposits",
+            "filters": [{"field": "created_at", "op": "in_last_days", "value": 30}],
+            "order_by": [{"field": "created_at", "direction": "desc"}],
+            "limit": 200,
+        }
+        intent = self.agent.infer(
+            messages=[{"role": "user", "content": "Muestra su valor"}],
+            job_id=None,
+            errors=0,
+            query_context={"last_query": existing_query},
+        )
+        self.assertEqual(intent.tool_hint, "query_database")
+        self.assertNotEqual(intent.tool_hint, "get_last_record_value")
+
+    def test_highest_value_transaction(self):
+        intent = self._infer("Cuál es la transacción de mayor valor")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertEqual(query["limit"], 1)
+        self.assertEqual(query["order_by"][0]["field"], "valor")
+        self.assertEqual(query["order_by"][0]["direction"], "desc")
+
+    def test_lowest_value_transaction(self):
+        intent = self._infer("Y si quiero el registro de menor valor")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertEqual(query["limit"], 1)
+        self.assertEqual(query["order_by"][0]["field"], "valor")
+        self.assertEqual(query["order_by"][0]["direction"], "asc")
+
+    def test_current_month_transactions(self):
+        intent = self._infer("Transacciones del mes actual")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertTrue(
+            any(f["op"] in {"date_gte", "date_lte"} for f in query["filters"])
+        )
+
+    def test_previous_month_transactions(self):
+        intent = self._infer("Cuáles fueron las transacciones del mes anterior?")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertTrue(any(f["op"] == "date_gte" for f in query["filters"]))
+        self.assertTrue(any(f["op"] == "date_lte" for f in query["filters"]))
+        self.assertTrue(
+            any(f["field"] == "fecha_consignacion" for f in query["filters"])
+        )
+
+    def test_specific_month_transactions(self):
+        intent = self._infer("Transacciones de abril 2026")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertTrue(any(f["op"] == "date_gte" for f in query["filters"]))
+        self.assertTrue(any(f["op"] == "date_lte" for f in query["filters"]))
+
+    def test_last_month_total_value(self):
+        intent = self._infer("Total del valor de las transacciones del último mes")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertEqual(query["aggregations"][0]["type"], "sum")
+        self.assertEqual(query["aggregations"][0]["field"], "valor")
+        self.assertTrue(any(f["op"] == "in_last_days" for f in query["filters"]))
+
+    def test_error_transactions_by_observation(self):
+        intent = self._infer("Qué transacciones tienen error en fecha")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        observation_filters = [
+            f for f in query["filters"] if f["field"] == "observations"
+        ]
+        self.assertTrue(observation_filters)
+        self.assertEqual(observation_filters[0]["op"], "icontains")
+        self.assertIn("fecha", observation_filters[0]["value"])
+
     def test_range_and_references_query(self):
         intent = self._infer(
             "Dame las referencias entre el 1 de enero y el 15 de febrero"
@@ -73,6 +198,29 @@ class AssistantIntentQueryTests(SimpleTestCase):
         ]
         self.assertTrue(ref_filters)
         self.assertEqual(ref_filters[0]["op"], "icontains")
+
+    def test_deposit_synonyms_match_transaction_queries(self):
+        intent = self._infer("Dame las consignaciones con error en fecha")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        observation_filters = [
+            item for item in query["filters"] if item["field"] == "observations"
+        ]
+        self.assertTrue(observation_filters)
+        self.assertIn("fecha", observation_filters[0]["value"])
+        self.assertIn("observations", query["select"])
+
+    def test_error_transactions_include_observations_in_select(self):
+        intent = self._infer("Muestrame transacciones con errores de valor")
+        self.assertEqual(intent.tool_hint, "query_database")
+        query = intent.arguments["query"]
+        self.assertEqual(query["source"], "deposits")
+        self.assertIn("observations", query["select"])
+        observation_filters = [
+            item for item in query["filters"] if item["field"] == "observations"
+        ]
+        self.assertTrue(observation_filters)
 
     def test_near_amount_lookup(self):
         intent = self._infer("Encuentra una transaccion cercana a $200.000")
