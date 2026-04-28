@@ -118,7 +118,7 @@ def _database_config():
     engine = engine_map.get(parsed.scheme)
     if not engine:
         raise ImproperlyConfigured("Unsupported DATABASE_URL scheme.")
-    
+
     db_config = {
         "default": {
             "ENGINE": engine,
@@ -129,20 +129,22 @@ def _database_config():
             "PORT": str(parsed.port or ""),
         }
     }
-    
+
     # Configuración específica para MySQL/MariaDB
     if engine == "django.db.backends.mysql":
-        db_config["default"].update({
-            "OPTIONS": {
-                "charset": "utf8mb4",
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-                "use_unicode": True,
-                "autocommit": True,
-            },
-            "ATOMIC_REQUESTS": True,
-            "CONN_MAX_AGE": 600,
-        })
-    
+        db_config["default"].update(
+            {
+                "OPTIONS": {
+                    "charset": "utf8mb4",
+                    "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+                    "use_unicode": True,
+                    "autocommit": True,
+                },
+                "ATOMIC_REQUESTS": True,
+                "CONN_MAX_AGE": 600,
+            }
+        )
+
     return db_config
 
 
