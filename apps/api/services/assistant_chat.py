@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_query_context(raw_query_context: Any) -> dict[str, Any]:
-    """Convierte el contexto de consulta recibido desde la API en un dict seguro."""
+    """Convierte contexto libre en `dict` para evitar errores de tipado.
+
+    El asistente trata `query_context` como metadata opcional, por lo que ante
+    tipos no compatibles se degrada silenciosamente a `{}`.
+    """
     if not isinstance(raw_query_context, dict):
         return {}
     return dict(raw_query_context)
@@ -101,7 +105,11 @@ class AssistantChatService:
         *,
         show_debug_details: bool,
     ) -> dict[str, Any]:
-        """Ajusta la respuesta final según la visibilidad de debug configurada."""
+        """Ajusta visibilidad de debug sin romper contrato público de respuesta.
+
+        Cuando `show_debug_details` es falso se eliminan errores internos para no
+        exponer detalles sensibles de infraestructura/proveedores al cliente.
+        """
         normalized = self._normalize_response(
             response, normalize_query_context(response.get("query_context"))
         )

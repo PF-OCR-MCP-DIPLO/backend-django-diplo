@@ -26,7 +26,6 @@ services:
   backend:
     build:
       context: .
-    # Quick dev workaround: run backend as root so it can write mounted volume
     user: root
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -58,6 +57,17 @@ services:
       DB_NAME: "${DB_NAME:-mcp_db}"
       DB_USER: "${DB_USER:-mcp_user}"
       DB_PASSWORD: "${DB_PASSWORD:-mcp_secure_2026}"
+
+      # Modo A: Ollama local en tu host.
+      #   OLLAMA_BASE_URL=http://host.docker.internal:11434
+      #
+      # Modo B: Ollama dentro del compose.
+      #   OLLAMA_BASE_URL=http://ollama:11434
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+      OLLAMA_URL: "${OLLAMA_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}/api/generate}"
+      OLLAMA_TAGS_URL: "${OLLAMA_TAGS_URL:-${OLLAMA_BASE_URL:-http://host.docker.internal:11434}/api/tags}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mariadb:
         condition: service_healthy
@@ -71,12 +81,22 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: "http://localhost:${BACKEND_PORT:-8000}/api"
-        VITE_API_KEY: "dev"
+        VITE_API_KEY: "${VITE_API_KEY:-dev}"
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     depends_on:
       - backend
 
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
 volumes:
   backend_media:
   mariadb_data:
+  ollama_data:

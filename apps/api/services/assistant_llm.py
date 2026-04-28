@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import requests
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
+
+_THINK_BLOCK_RE = re.compile(
+    r"<think\b[^>]*>.*?</think>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 
 class HttpSession(Protocol):
@@ -36,6 +45,14 @@ class TextGenerationConfig:
     temperature: float = 0.2
     num_predict: int = 256
 
+    # Ollama soporta modelos que pueden devolver razonamiento interno.
+    # Para el asistente de UI conviene desactivarlo por defecto, porque el
+    # frontend necesita una respuesta final y no trazas de razonamiento.
+    #
+    # None permite no enviar el campo si algún despliegue antiguo de Ollama
+    # tuviera problemas con el parámetro.
+    think: bool | None = False
+
 
 class AssistantTextClient:
     """Small adapter for external text providers used by assistant agents."""
@@ -62,6 +79,7 @@ class AssistantTextClient:
     ) -> AssistantProviderError:
         normalized_detail = str(detail or "").strip()
         normalized_lower = normalized_detail.lower()
+
         if "requires more system memory" in normalized_lower:
             return AssistantProviderError(
                 provider="ollama",
@@ -70,6 +88,7 @@ class AssistantTextClient:
                 code="assistant_model_too_large",
                 message=self._assistant_model_memory_message(),
             )
+
         return AssistantProviderError(
             provider="ollama",
             status_code=getattr(response, "status_code", None),
@@ -81,8 +100,83 @@ class AssistantTextClient:
             ),
         )
 
+    def _clean_public_text(self, value: Any) -> str:
+        """Normaliza texto visible y elimina bloques de razonamiento.
+
+        Algunos modelos devuelven contenido tipo:
+
+            <think>...</think>
+            Respuesta final
+
+        El asistente no debe mostrar el bloque interno al usuario. Si el modelo
+        devuelve solo thinking y no respuesta final, se retorna cadena vacía para
+        que la capa superior use su fallback controlado.
+        """
+        text = str(value or "")
+        if not text:
+            return ""
+
+        text = _THINK_BLOCK_RE.sub("", text)
+        return text.strip()
+
+    def _extract_ollama_text(
+        self,
+        payload: Any,
+        *,
+        model: str,
+    ) -> str:
+        """Extrae solo la respuesta pública desde payloads de Ollama.
+
+        Soporta:
+        - /api/generate: {"response": "...", "thinking": "..."}
+        - /api/chat-like: {"message": {"content": "...", "thinking": "..."}}
+
+        No usa `thinking` como respuesta visible. Si Ollama devuelve thinking
+        pero no respuesta final, se registra diagnóstico y se devuelve "".
+        """
+        if not isinstance(payload, dict):
+            logger.warning(
+                "Ollama returned non-dict payload for assistant generation: model=%s",
+                model,
+            )
+            return ""
+
+        response_text = self._clean_public_text(payload.get("response"))
+        if response_text:
+            return response_text
+
+        message = payload.get("message")
+        if isinstance(message, dict):
+            message_text = self._clean_public_text(message.get("content"))
+            if message_text:
+                return message_text
+
+        thinking_text = str(payload.get("thinking") or "")
+        if isinstance(message, dict) and not thinking_text:
+            thinking_text = str(message.get("thinking") or "")
+
+        if thinking_text.strip():
+            logger.warning(
+                "Ollama returned thinking without public response: "
+                "model=%s done_reason=%s thinking_len=%s raw_keys=%s",
+                model,
+                payload.get("done_reason") or payload.get("doneReason"),
+                len(thinking_text),
+                sorted(payload.keys()),
+            )
+        else:
+            logger.warning(
+                "Ollama returned empty public response: "
+                "model=%s done_reason=%s raw_keys=%s",
+                model,
+                payload.get("done_reason") or payload.get("doneReason"),
+                sorted(payload.keys()),
+            )
+
+        return ""
+
     def _ollama_generate(self, prompt: str, config: TextGenerationConfig) -> str:
-        payload = {
+        payload: dict[str, Any] = {
             "model": config.model,
             "prompt": prompt,
             "stream": False,
@@ -91,6 +185,10 @@ class AssistantTextClient:
                 "num_predict": config.num_predict,
             },
         }
+
+        if config.think is not None:
+            payload["think"] = config.think
+
         try:
             response = self.session.post(
                 settings.OLLAMA_URL,
@@ -109,6 +207,7 @@ class AssistantTextClient:
         except requests.HTTPError as exc:
             response = getattr(exc, "response", None)
             detail = None
+
             if response is not None:
                 try:
                     payload_data = response.json()
@@ -121,6 +220,7 @@ class AssistantTextClient:
                         )
                 except Exception:
                     detail = getattr(response, "text", "") or None
+
             raise self._normalize_ollama_error(response, detail) from exc
         except requests.RequestException as exc:
             raise AssistantProviderError(
@@ -130,8 +230,19 @@ class AssistantTextClient:
                 code="provider_unavailable",
                 message="No se pudo contactar a Ollama.",
             ) from exc
-        data = response.json()
-        return str(data.get("response", ""))
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise AssistantProviderError(
+                provider="ollama",
+                status_code=getattr(response, "status_code", None),
+                detail=getattr(response, "text", "") or "Respuesta JSON invalida.",
+                code="provider_invalid_response",
+                message="Ollama devolvio una respuesta invalida.",
+            ) from exc
+
+        return self._extract_ollama_text(data, model=config.model)
 
     def _anthropic_generate(self, prompt: str, config: TextGenerationConfig) -> str:
         payload = {
@@ -140,16 +251,21 @@ class AssistantTextClient:
             "temperature": config.temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
+
         try:
             response = self.session.post(
                 getattr(
-                    settings, "ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"
+                    settings,
+                    "ANTHROPIC_URL",
+                    "https://api.anthropic.com/v1/messages",
                 ),
                 json=payload,
                 headers={
                     "x-api-key": config.api_key,
                     "anthropic-version": getattr(
-                        settings, "ANTHROPIC_VERSION", "2023-06-01"
+                        settings,
+                        "ANTHROPIC_VERSION",
+                        "2023-06-01",
                     ),
                     "content-type": "application/json",
                 },
@@ -167,6 +283,7 @@ class AssistantTextClient:
         except requests.HTTPError as exc:
             response = getattr(exc, "response", None)
             detail = getattr(response, "text", "") or "Anthropic devolvio un error."
+
             raise AssistantProviderError(
                 provider="anthropic",
                 status_code=getattr(response, "status_code", None),
@@ -182,10 +299,22 @@ class AssistantTextClient:
                 code="provider_unavailable",
                 message="No se pudo contactar al proveedor configurado.",
             ) from exc
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise AssistantProviderError(
+                provider="anthropic",
+                status_code=getattr(response, "status_code", None),
+                detail=getattr(response, "text", "") or "Respuesta JSON invalida.",
+                code="provider_invalid_response",
+                message="Anthropic devolvio una respuesta invalida.",
+            ) from exc
+
         content = data.get("content") or []
         if content and isinstance(content, list):
             first_item = content[0] or {}
             if isinstance(first_item, dict):
-                return str(first_item.get("text", ""))
-        return str(data.get("text", ""))
+                return str(first_item.get("text", "")).strip()
+
+        return str(data.get("text", "") or "").strip()

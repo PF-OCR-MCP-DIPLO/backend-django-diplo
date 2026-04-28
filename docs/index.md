@@ -1,20 +1,46 @@
-# backend-diplo-final
+# Índice de documentación backend
 
-Backend Django para carga de documentos, OCR/LLM, correcciones, exportación y MCP.
+Este índice es el mapa canónico de documentación de `backend-diplo-final/`.
 
-## Mapa rápido
+## Orden recomendado de lectura
 
-- [Arquitectura general](architecture/overview.md)
-- [Archivo](archive/README.md)
-- [Flujo de datos](architecture/data-flow.md)
-- [Desarrollo local](setup/local-development.md)
-- [Variables de entorno](setup/environment.md)
-- [Apps Django](backend/apps.md)
-- [API REST](backend/api.md)
-- [Pipeline de procesamiento](backend/processing-pipeline.md)
-- [Seguridad](backend/security.md)
-- [MCP](backend/mcp.md)
-- [Operaciones](backend/operations.md)
-- [Testing](TESTING.md)
-- [Deployment](deployment.md)
-- [Integración frontend-backend](integration/frontend-backend.md)
+1. [Primeros pasos](getting-started.md)
+2. [Arquitectura](architecture.md)
+3. [Configuración](configuration.md)
+4. [Desarrollo](development.md)
+5. [API](api.md)
+6. [Autenticación](authentication.md)
+7. [Base de datos](database.md)
+8. [Integraciones](integrations.md)
+9. [Jobs y workers](jobs-and-workers.md)
+10. [Testing](testing.md)
+11. [Troubleshooting](troubleshooting.md)
+12. [Documentación en código](code-documentation.md)
+
+## Mapa documental
+
+- [getting-started.md](getting-started.md): instalación rápida, ejecución local y flujo mínimo.
+- [architecture.md](architecture.md): módulos reales, flujo end-to-end y decisiones operativas.
+- [configuration.md](configuration.md): variables de entorno y configuración de runtime.
+- [development.md](development.md): comandos de desarrollo, scripts y prácticas del repo.
+- [testing.md](testing.md): estrategia de tests y comandos verificados desde CI/código.
+- [troubleshooting.md](troubleshooting.md): fallos frecuentes y diagnóstico guiado.
+- [api.md](api.md): rutas REST reales y contratos observables.
+- [authentication.md](authentication.md): seguridad por API key y supuestos.
+- [database.md](database.md): modelos, relaciones y persistencia.
+- [integrations.md](integrations.md): OCR/LLM y dependencias externas.
+- [jobs-and-workers.md](jobs-and-workers.md): procesamiento síncrono/asíncrono y reprocesos.
+- [code-documentation.md](code-documentation.md): convención de docstrings y módulos críticos.
+- [adr/README.md](adr/README.md): registro de decisiones arquitectónicas (ADR).
+
+## Referencia histórica
+
+- [archive/README.md](archive/README.md): inventario de documentación heredada.
+- Documentos legacy fuera de `docs/` fueron reclasificados o absorbidos; si algún dato
+  histórico no está trazado aquí, queda **Pendiente de validar**.
+
+## Pendiente de validar
+
+- Compatibilidad de toda la documentación legacy de migración MariaDB con entornos
+  productivos no locales.
+- Alcance operativo de flujos MCP fuera del uso cubierto por tests y código backend actual.
