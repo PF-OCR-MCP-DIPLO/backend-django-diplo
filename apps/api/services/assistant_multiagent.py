@@ -2888,7 +2888,7 @@ class AssistantAgent:
 
     def _sync_runtime_model(self) -> None:
         runtime = get_runtime_config()
-        model = runtime.assistant_model or runtime.llm_model or settings.OLLAMA_MODEL
+        model = runtime.assistant_model or runtime.llm_model or getattr(settings, 'ASSISTANT_MODEL', settings.OLLAMA_MODEL)
         timeout = runtime.request_timeout_seconds or settings.OLLAMA_TIMEOUT
         provider = runtime.assistant_provider or runtime.llm_provider or "ollama"
         api_key = runtime.assistant_api_key or runtime.llm_api_key or ""
@@ -2897,8 +2897,8 @@ class AssistantAgent:
         self.timeout = timeout
         self.provider = provider
         self.api_key = api_key
-        self.temperature = runtime.assistant_temperature or 0.2
-        self.num_predict = runtime.assistant_num_predict or 256
+        self.temperature = runtime.assistant_temperature or getattr(settings, 'ASSISTANT_TEMPERATURE', 0.2)
+        self.num_predict = runtime.assistant_num_predict or getattr(settings, 'ASSISTANT_NUM_PREDICT', 256)
 
         self.intent_agent.model = model
         self.intent_agent.timeout = timeout
