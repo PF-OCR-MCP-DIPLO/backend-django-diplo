@@ -12,7 +12,15 @@ from apps.documents.services.upload_service import create_process_run_from_uploa
 
 
 def upload_document_from_path(file_path: str) -> dict[str, Any]:
-    """Sube un DOCX desde una ruta local y devuelve el detalle serializado."""
+    """Sube un DOCX desde disco local usando el mismo flujo de upload de la API.
+
+    Side Effects:
+        - Persiste un `ProcessRun` y archivos asociados en storage.
+        - Ejecuta las validaciones de upload del dominio (`UploadValidationError`).
+
+    Raises:
+        ValueError: Si la ruta no existe o no es `.docx`.
+    """
     path = Path(file_path)
     if not path.exists() or not path.is_file():
         raise ValueError(f"File not found: {file_path}")

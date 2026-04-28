@@ -33,6 +33,8 @@ LLM_PROVIDERS = [
 
 @dataclass(frozen=True)
 class RuntimeProcessingConfig:
+    """Snapshot inmutable de configuración efectiva para un ciclo de procesamiento."""
+
     ocr_mode: str
     ocr_provider: str
     ocr_model: str

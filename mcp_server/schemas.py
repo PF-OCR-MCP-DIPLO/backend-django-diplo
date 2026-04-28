@@ -45,6 +45,7 @@ class ReprocessSourceInput(BaseModel):
     @field_validator("deposit_id")
     @classmethod
     def validate_target(cls, value, info):
+        """Exige al menos un objetivo de reproceso para evitar llamadas ambiguas."""
         source_image_id = info.data.get("source_image_id")
         if value is None and source_image_id is None:
             raise ValueError("source_image_id or deposit_id is required")
@@ -70,6 +71,7 @@ class UpdateProcessingSettingsInput(BaseModel):
     assistant_show_debug_details: bool | None = None
 
     def to_partial_dict(self) -> dict:
+        """Exporta solo campos presentes para aplicar patch parcial idempotente."""
         return self.model_dump(exclude_none=True)
 
 

@@ -315,11 +315,6 @@ def process_prepared_job(process_run, runtime_config):
 
 
 def process_job(process_run):
+    """Atajo de compatibilidad para preparar y ejecutar una corrida completa."""
     prepared_job, runtime_config = prepare_job_for_full_processing(process_run)
     return process_prepared_job(prepared_job, runtime_config)
-
-
-"""Orquestación principal del pipeline de procesamiento.
-
-Coordina preparación, ejecución por imagen, conteos, estados finales y trazas.
-"""

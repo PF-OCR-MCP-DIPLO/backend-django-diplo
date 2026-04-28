@@ -1,3 +1,8 @@
+"""Serializers REST del backend de consignaciones.
+
+Transforman modelos y payloads de entrada en contratos estables para la API.
+"""
+
 import json
 from decimal import Decimal
 
@@ -311,6 +316,11 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
 
 
 class AssistantChatSerializer(serializers.Serializer):
+    """Valida payload de chat del asistente con límites de seguridad.
+
+    Admite `job_id` y `jobId` como alias para compatibilidad de clientes.
+    """
+
     messages = serializers.ListField(
         child=serializers.DictField(),
         allow_empty=False,
@@ -326,6 +336,7 @@ class AssistantChatSerializer(serializers.Serializer):
     max_query_context_chars = 4000
 
     def validate(self, attrs):
+        """Normaliza alias de identificador de job y evita conflictos de entrada."""
         camel_job_id = attrs.pop("jobId", None)
         snake_job_id = attrs.get("job_id")
         if (
@@ -341,6 +352,7 @@ class AssistantChatSerializer(serializers.Serializer):
         return attrs
 
     def validate_messages(self, value):
+        """Restringe cardinalidad, roles y tamaño de mensajes del historial."""
         if len(value) > self.max_messages:
             raise serializers.ValidationError(
                 f"No more than {self.max_messages} messages are allowed."
@@ -366,6 +378,7 @@ class AssistantChatSerializer(serializers.Serializer):
         return cleaned
 
     def validate_query_context(self, value):
+        """Controla tamaño y profundidad para evitar payloads abusivos."""
         serialized = json.dumps(value)
         if len(serialized) > self.max_query_context_chars:
             raise serializers.ValidationError("query_context is too large.")
@@ -391,6 +404,8 @@ class AssistantChatSerializer(serializers.Serializer):
 
 
 class BulkDepositCorrectionItemSerializer(serializers.Serializer):
+    """Valida una fila de corrección manual de consignación."""
+
     id = serializers.IntegerField(min_value=1)
     fecha_consignacion = serializers.CharField(allow_blank=True, required=False)
     hora_consignacion = serializers.CharField(allow_blank=True, required=False)
@@ -398,6 +413,7 @@ class BulkDepositCorrectionItemSerializer(serializers.Serializer):
     valor = serializers.DecimalField(max_digits=14, decimal_places=2)
 
     def validate(self, attrs):
+        """Aplica validación estructural usando schema Pydantic canónico."""
         payload = {
             "fecha_consignacion": attrs.get("fecha_consignacion") or None,
             "hora_consignacion": attrs.get("hora_consignacion") or None,
@@ -417,14 +433,12 @@ class BulkDepositCorrectionItemSerializer(serializers.Serializer):
 
 
 class BulkDepositCorrectionSerializer(serializers.Serializer):
+    """Envuelve lote de correcciones para actualización masiva por job."""
+
     items = BulkDepositCorrectionItemSerializer(many=True, allow_empty=False)
 
 
 class DepositCorrectionSerializer(BulkDepositCorrectionItemSerializer):
+    """Compatibilidad histórica para payload de corrección con `job_id`."""
+
     job_id = serializers.IntegerField(min_value=1)
-
-
-"""Serializers REST del backend de consignaciones.
-
-Transforman modelos y payloads de entrada en contratos estables para la API.
-"""

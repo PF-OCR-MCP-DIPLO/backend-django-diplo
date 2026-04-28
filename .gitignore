@@ -133,6 +133,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -152,6 +154,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+.ruff_cache/
 .dmypy.json
 dmypy.json
 
@@ -172,6 +175,13 @@ cython_debug/
 #.idea/
 
 # End of https://www.toptal.com/developers/gitignore/api/django
+
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.old
+*.swp
 
 
 *.docx

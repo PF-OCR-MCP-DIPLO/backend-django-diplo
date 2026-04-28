@@ -1,4 +1,10 @@
 #!/usr/bin/env python
+"""CLI de diagnóstico para perfilar el pipeline OCR/LLM extremo a extremo.
+
+Permite crear jobs sintéticos o reutilizar jobs existentes, ejecutar variantes
+de procesamiento (sync/async, OCR-only, LLM-only) y emitir reportes JSON/MD.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def parse_args() -> argparse.Namespace:
+    """Define banderas de depuración del pipeline sin tocar endpoints públicos."""
     parser = argparse.ArgumentParser(description="Debug OCR/LLM processing pipeline.")
     parser.add_argument("--job-id", type=int)
     parser.add_argument("--file", type=Path)
@@ -155,6 +162,7 @@ def build_docx_with_images_and_text() -> bytes:
 
 
 def load_or_create_job() -> ProcessRun:
+    """Resuelve un job existente o crea uno temporal para diagnóstico."""
     if args.job_id:
         return ProcessRun.objects.get(pk=args.job_id)
     if args.file:
@@ -182,6 +190,7 @@ def selected_images(job: ProcessRun) -> list[SourceImage]:
 
 
 def set_timeout_setting() -> int | None:
+    """Ajusta timeout runtime temporalmente y devuelve el valor previo."""
     if not args.timeout:
         return None
     settings_obj = get_or_create_processing_settings()
@@ -192,6 +201,10 @@ def set_timeout_setting() -> int | None:
 
 
 def run_subset_sync(job: ProcessRun) -> ProcessRun:
+    """Ejecuta un subconjunto controlado del pipeline en modo síncrono.
+
+    Se usa para aislar cuellos de botella por etapa sin depender del worker async.
+    """
     if args.llm_only_from_existing_ocr:
         prepared_job = ProcessRun.objects.get(pk=job.pk)
         runtime_config = get_runtime_config()
@@ -353,6 +366,7 @@ def run_subset_sync(job: ProcessRun) -> ProcessRun:
 
 
 def run_async(job: ProcessRun) -> ProcessRun:
+    """Dispara procesamiento asíncrono y realiza polling de estado operacional."""
     started = start_job_processing(job, force=True)
     deadline = time.monotonic() + (args.timeout or 90)
     client = APIClient()
@@ -376,6 +390,7 @@ def run_async(job: ProcessRun) -> ProcessRun:
 
 
 def probable_cause(report: dict) -> str:
+    """Infiere una causa probable a partir de métricas agregadas del diagnóstico."""
     summary = report["summary"]
     if summary["stale_processing"]:
         return "job stale in processing"
@@ -434,6 +449,7 @@ def print_report(report: dict) -> None:
 
 
 def write_markdown(report: dict, path: Path) -> None:
+    """Genera reporte Markdown compacto para compartir hallazgos de rendimiento."""
     summary = report["summary"]
     lines = [
         "# Processing Diagnostic Report",
@@ -472,6 +488,7 @@ def write_markdown(report: dict, path: Path) -> None:
 
 
 def main() -> int:
+    """Coordina ejecución del diagnóstico y restaura settings temporales."""
     previous_timeout = set_timeout_setting()
     try:
         job = load_or_create_job()

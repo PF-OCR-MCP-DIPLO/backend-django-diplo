@@ -1,58 +1,65 @@
-# Documentación interna del código
+# Documentación en código
 
-Esta guía define cómo documentar el código fuente del backend Django desde
-dentro, sin reemplazar la documentación externa de MkDocs.
+## Propósito
 
-## Objetivo
+Definir cómo mantener documentación técnica dentro del código backend (docstrings en Python)
+alineada con los contratos reales.
 
-La documentación interna debe explicar responsabilidad, contrato, entradas,
-salidas, efectos secundarios, errores, decisiones de seguridad y flujos de
-OCR/LLM, corrección manual, exportación y MCP.
+## Convención usada
 
-## Qué se documenta dentro del código
+- Lenguaje: Python.
+- Convención principal: docstrings en módulos, clases y funciones públicas.
+- Comentarios inline: solo para decisiones no obvias o reglas de negocio complejas.
 
-- Docstrings en módulos, clases, serializers, views, servicios y providers.
-- Comentarios inline solo cuando expliquen una decisión no evidente.
-- Tests complejos cuando la intención del caso no se deduce por el nombre.
+## Módulos actualmente documentados (alto impacto)
 
-## Qué se documenta en MkDocs
+- `MCP_back/settings.py`
+- `MCP_back/urls.py`
+- `apps/api/views.py`
+- `apps/api/auth.py`
+- `apps/api/serializers.py`
+- `apps/documents/services/upload_service.py`
+- `apps/processing/models.py`
+- `apps/processing/services/orchestrator.py`
+- `apps/processing/services/job_runner.py`
+- `apps/processing/services/manual_corrections.py`
+- `apps/processing/services/settings_service.py`
+- `apps/extraction/services/ocr_service.py`
+- `apps/common/middleware/request_id.py`
+- `apps/common/logging.py`
+- `apps/api/services/tool_dispatcher.py`
+- `apps/api/services/shared_tools.py`
+- `mcp_server/server.py`
+- `mcp_server/api_client.py`
+- `mcp_server/schemas.py`
+- `scripts/debug_processing_pipeline.py`
+- `scripts/init_mariadb.py`
+- `scripts/verify_mariadb.py`
 
-MkDocs se reserva para arquitectura, runbooks, ADRs, testing y operación.
+## Qué debe explicar cada docstring
 
-## Convenciones
+- Propósito del módulo/clase/función.
+- Parámetros y retorno cuando la firma no basta.
+- Errores esperables.
+- Efectos secundarios (DB, archivos, llamadas externas, hilos).
+- Supuestos clave del negocio (estados de job, fallback OCR, seguridad API key).
 
-- Explicar contrato, dependencias, transacciones y efectos secundarios.
-- Aclarar campos sensibles, write-only/read-only y validaciones relevantes.
-- Documentar timeout, fallback y límites de los providers OCR/LLM.
+## Módulos críticos para mantener al día
 
-## Cuándo comentar inline
+- Capa REST: `apps/api/views.py`, `apps/api/serializers.py`.
+- Pipeline: `apps/processing/services/orchestrator.py`.
+- Runtime config: `apps/processing/services/settings_service.py`.
+- Integración OCR/LLM: `apps/extraction/services/ocr_service.py`.
 
-- Cuando un fallback OCR evita perder texto útil.
-- Cuando un flujo conserva resultados parciales para reproceso posterior.
-- Cuando una validación tiene un motivo de seguridad.
+## Pendiente de documentación on-code
 
-## Cuándo evitar comentarios
+- Revisar tests complejos para agregar intención cuando el nombre no sea suficiente.
+- Homogeneizar estilo de docstrings en todos los servicios del asistente para incluir
+  sección explícita de errores y efectos secundarios cuando aplique.
 
-- Si el docstring ya cubre la intención.
-- Si el comentario solo repite la línea de código.
-- Si la intención no puede confirmarse, dejar una nota explícita.
+## Enlaces relacionados
 
-## Contratos frontend-backend
-
-- Mantener alineados serializers y tipos cliente.
-- Documentar qué endpoint consume cada flujo de UI.
-- Explicar estados de proceso y errores esperados.
-
-## Efectos secundarios
-
-Documentar transacciones, escrituras en storage, reprocesos y exportaciones.
-
-## Errores
-
-Documentar validaciones, conflictos de estado, timeouts y fallos parciales.
-
-## Tests
-
-- Documentar solo pruebas complejas o contraintuitivas.
-- Explicar el caso de negocio protegido por la prueba.
+- [Arquitectura](architecture.md)
+- [API](api.md)
+- [Integraciones](integrations.md)
 
