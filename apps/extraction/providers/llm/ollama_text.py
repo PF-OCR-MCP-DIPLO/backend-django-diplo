@@ -213,8 +213,11 @@ INSTRUCCIONES CRITICAS ESTRICTAS:
 4. El campo 'valor' y 'referencia' son obligatorios.
 5. El campo 'fecha_consignacion' debe ir en formato DD/MM/YYYY. Si no existe con certeza, usa null.
 6. Si no hay hora con certeza, usa null.
-7. Incluye 1 registro por imagen salvo que existan multiples transacciones explicitas.
-8. Criterios actuales de extraccion/validacion:
+7. Extrae TODAS las consignaciones visibles en el texto OCR. No omitas la ultima fila ni el ultimo bloque.
+8. Si una linea o bloque tiene referencia y valor, crea un registro aunque fecha u hora sean inciertas.
+9. Devuelve un array JSON con todas las consignaciones; fecha y hora son opcionales y pueden ser null.
+10. Incluye 1 registro por imagen salvo que existan multiples transacciones explicitas.
+11. Criterios actuales de extraccion/validacion:
 {criteria_block}
 
 Texto OCR original a analizar:

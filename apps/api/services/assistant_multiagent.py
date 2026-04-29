@@ -2037,8 +2037,16 @@ _INVALID_OBSERVATION_MARKERS = (
 def _completed_valid_deposits(queryset: Any) -> Any:
     """Restrict assistant summary tools to records without error observations."""
 
-    for marker in _INVALID_OBSERVATION_MARKERS:
-        queryset = queryset.exclude(observations__icontains=marker)
+    invalid_ids = []
+    for deposit_id, observations in queryset.values_list("id", "observations"):
+        normalized = _normalize_text(" ".join(str(item) for item in observations or []))
+        if any(
+            _normalize_text(marker) in normalized
+            for marker in _INVALID_OBSERVATION_MARKERS
+        ):
+            invalid_ids.append(deposit_id)
+    if invalid_ids:
+        queryset = queryset.exclude(id__in=invalid_ids)
     return queryset
 
 
@@ -2656,6 +2664,8 @@ class ToolExecutionAgent:
             queryset = queryset.filter(
                 **{"created_at__gte": start, "created_at__lt": next_start}
             )
+            if source == "deposits":
+                queryset = _completed_valid_deposits(queryset)
 
         # Aggregations
         aggregations = (

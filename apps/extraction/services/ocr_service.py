@@ -106,6 +106,8 @@ def _payload(provider, model, mode, text):
         "effective_ocr_provider": provider,
         "effective_ocr_model": model,
         "score": score_ocr_text(text),
+        "ocr_raw_text_chars": len(text or ""),
+        "ocr_raw_text_sample": (text or "")[:500],
     }
 
 
@@ -248,7 +250,19 @@ def _best_result(*results):
     candidates = [item for item in results if item is not None]
     if not candidates:
         return None
-    return max(candidates, key=lambda item: score_ocr_text(item.get("text", "")))
+
+    def ranking(item):
+        payload = item.get("payload") or {}
+        valid_records = int(payload.get("valid_records_count") or 0)
+        structured_records = int(payload.get("structured_records_count") or 0)
+        return (
+            valid_records,
+            structured_records,
+            score_ocr_text(item.get("text", "")),
+            len(item.get("text", "") or ""),
+        )
+
+    return max(candidates, key=ranking)
 
 
 def _attempt_result(
@@ -305,6 +319,17 @@ def _result_with_attempts(
             "score": score_ocr_text(selected_text),
             "fallback_used": fallback_used,
             "attempts": [_attempt_payload(attempt) for attempt in attempts],
+            "_attempt_texts": [
+                {
+                    "engine": attempt.engine,
+                    "provider": attempt.provider,
+                    "model": attempt.model,
+                    "text": attempt.text,
+                    "score": attempt.score,
+                    "error": attempt.error,
+                }
+                for attempt in attempts
+            ],
         }
     )
 
@@ -329,9 +354,8 @@ def extract_raw_text(source_image, runtime_config):
     use_stub = bool(getattr(settings, "STUB_PROVIDERS", False))
     accept_score = _safe_timeout(getattr(settings, "AUTO_OCR_ACCEPT_SCORE", 8), 8)
 
-    # Critical fix:
-    # - auto must not start with vision, because vision can block on thinking models.
-    # - auto starts with Tesseract and only calls vision if Tesseract is weak/fails.
+    # Auto starts with Tesseract so a local OCR result is available quickly, then
+    # compares the vision attempt before downstream structuring chooses a winner.
     if runtime_config.ocr_mode == "tesseract" and not use_stub:
         result, attempt = _attempt_result(
             engine="tesseract",
@@ -363,16 +387,20 @@ def extract_raw_text(source_image, runtime_config):
 
         selected = tesseract_result
 
-        if tesseract_attempt.score < accept_score:
-            vision_result, vision_attempt = _attempt_result(
-                engine="vision",
-                provider=normalize_ocr_provider(runtime_config.ocr_provider),
-                model=runtime_config.ocr_model,
-                runner=lambda: _run_vision(source_image, runtime_config),
-            )
-            attempts.append(vision_attempt)
-            fallback_used = True
-            selected = _best_result(tesseract_result, vision_result)
+        vision_result, vision_attempt = _attempt_result(
+            engine="vision",
+            provider=normalize_ocr_provider(runtime_config.ocr_provider),
+            model=runtime_config.ocr_model,
+            runner=lambda: _run_vision(source_image, runtime_config),
+        )
+        attempts.append(vision_attempt)
+        fallback_used = vision_result is not None and (
+            tesseract_result is None
+            or tesseract_attempt.score < accept_score
+            or score_ocr_text(vision_result.get("text", ""))
+            > score_ocr_text(tesseract_result.get("text", ""))
+        )
+        selected = _best_result(tesseract_result, vision_result)
 
         return _result_with_attempts(selected, attempts, fallback_used=fallback_used)
 

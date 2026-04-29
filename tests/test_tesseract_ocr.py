@@ -16,8 +16,9 @@ class ResolveTesseractLanguageTests(SimpleTestCase):
         self.assertEqual(resolve_tesseract_language(None), "spa")
 
     def test_tesseract_language_preserved(self):
+        self.assertEqual(resolve_tesseract_language("spa"), "spa")
         self.assertEqual(resolve_tesseract_language("eng"), "eng")
-        self.assertEqual(resolve_tesseract_language("eng+spa"), "eng+spa")
+        self.assertEqual(resolve_tesseract_language("spa+eng"), "spa+eng")
 
     def test_preprocess_image_returns_temp_path(self):
         from django.core.files.base import ContentFile

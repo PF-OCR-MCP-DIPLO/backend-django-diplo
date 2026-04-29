@@ -223,8 +223,13 @@ def process_prepared_job(process_run, runtime_config):
                         "source_image_id": source_image.pk,
                         "duration_ms": int((time.monotonic() - started_at) * 1000),
                         "records_count": source_image.deposits.count(),
+                        "persisted_records_count": source_image.deposits.count(),
                     },
-                    notes="Image processed successfully",
+                    notes=(
+                        "Image processed successfully"
+                        if source_image.deposits.count() > 0
+                        else "Image processed with 0 persisted records"
+                    ),
                 )
             except Exception as error:
                 failed_images += 1
