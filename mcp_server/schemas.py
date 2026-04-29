@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from django.conf import settings
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class UploadDocumentInput(BaseModel):
+class StrictMcpInput(BaseModel):
+    """Base estricta para evitar argumentos MCP no declarados."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def _configured_upload_roots() -> list[Path]:
+    """Devuelve raíces permitidas para upload MCP, si fueron configuradas."""
+    raw_roots = getattr(settings, "MCP_ALLOWED_UPLOAD_ROOTS", []) or []
+    roots: list[Path] = []
+    for raw_root in raw_roots:
+        root = Path(str(raw_root)).expanduser()
+        if root.is_absolute():
+            roots.append(root.resolve(strict=False))
+    return roots
+
+
+class UploadDocumentInput(StrictMcpInput):
     """Entrada para subir documentos desde una ruta local."""
 
     file_path: str = Field(description="Absolute path to the .docx file")
@@ -15,21 +34,27 @@ class UploadDocumentInput(BaseModel):
     @field_validator("file_path")
     @classmethod
     def validate_file_path(cls, value: str) -> str:
-        path = Path(value)
+        path = Path(value.strip()).expanduser()
         if not path.is_absolute():
             raise ValueError("file_path must be absolute")
         if path.suffix.lower() != ".docx":
             raise ValueError("Only .docx files are supported")
-        return value
+        resolved = path.resolve(strict=False)
+        allowed_roots = _configured_upload_roots()
+        if allowed_roots and not any(
+            resolved == root or resolved.is_relative_to(root) for root in allowed_roots
+        ):
+            raise ValueError("file_path is outside allowed upload roots")
+        return str(resolved)
 
 
-class JobIdInput(BaseModel):
+class JobIdInput(StrictMcpInput):
     """Entrada mínima para herramientas que operan sobre un job."""
 
     job_id: int = Field(ge=1, description="Identifier of the processing job")
 
 
-class ReprocessSourceInput(BaseModel):
+class ReprocessSourceInput(StrictMcpInput):
     """Entrada para reprocesar una fuente o el origen de un depósito."""
 
     job_id: int = Field(ge=1, description="Identifier of the processing job")
@@ -52,7 +77,7 @@ class ReprocessSourceInput(BaseModel):
         return value
 
 
-class UpdateProcessingSettingsInput(BaseModel):
+class UpdateProcessingSettingsInput(StrictMcpInput):
     """Entrada parcial para aplicar ajustes de configuración."""
 
     ocr_mode: str | None = None
@@ -70,28 +95,28 @@ class UpdateProcessingSettingsInput(BaseModel):
     request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)
     assistant_show_debug_details: bool | None = None
 
-    def to_partial_dict(self) -> dict:
+    def to_partial_dict(self) -> dict[str, Any]:
         """Exporta solo campos presentes para aplicar patch parcial idempotente."""
         return self.model_dump(exclude_none=True)
 
 
-class AssistantChatMessageInput(BaseModel):
+class AssistantChatMessageInput(StrictMcpInput):
     """Mensaje individual enviado al asistente por MCP."""
 
-    role: str
-    content: str
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(min_length=1, max_length=4000)
 
 
-class AssistantChatInput(BaseModel):
+class AssistantChatInput(StrictMcpInput):
     """Payload del chat del asistente en el contrato MCP."""
 
-    messages: list[AssistantChatMessageInput]
+    messages: list[AssistantChatMessageInput] = Field(min_length=1, max_length=20)
     job_id: int | None = Field(default=None, ge=1)
     errors: int = Field(default=0, ge=0)
-    query_context: dict = Field(default_factory=dict)
+    query_context: dict[str, Any] = Field(default_factory=dict)
 
 
-class DepositCorrectionInput(BaseModel):
+class DepositCorrectionInput(StrictMcpInput):
     """Entrada para corregir una consignación desde una herramienta MCP."""
 
     job_id: int = Field(ge=1, description="Identifier of the processing job")

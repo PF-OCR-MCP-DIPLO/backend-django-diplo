@@ -42,6 +42,31 @@ class BackendApiClient:
             headers["X-API-Key"] = self.api_token
         return headers
 
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Ejecuta HTTP con timeout y errores normalizados para MCP."""
+        request_headers = {**self._headers(), **(headers or {})}
+        try:
+            response = requests.request(
+                method,
+                f"{self.base_url}{path}",
+                headers=request_headers,
+                timeout=self.timeout if timeout is None else timeout,
+                **kwargs,
+            )
+        except requests.Timeout as exc:
+            raise BackendApiError(504, "Backend request timed out") from exc
+        except requests.RequestException as exc:
+            raise BackendApiError(502, "Backend request failed") from exc
+        return self._handle_response(response)
+
     def _handle_response(self, response: requests.Response) -> Any:
         """Normaliza éxito/error HTTP al contrato interno del cliente.
 
@@ -50,7 +75,10 @@ class BackendApiClient:
         """
         if response.ok:
             if response.content:
-                return response.json()
+                try:
+                    return response.json()
+                except ValueError:
+                    return {}
             return {}
         payload: Any | None
         try:
@@ -59,18 +87,21 @@ class BackendApiClient:
             payload = None
         detail = "Unknown error"
         if isinstance(payload, dict):
-            detail = str(payload.get("detail") or payload)
+            error_payload = payload.get("error")
+            if isinstance(error_payload, dict):
+                detail = str(
+                    error_payload.get("message")
+                    or error_payload.get("detail")
+                    or error_payload
+                )
+            else:
+                detail = str(payload.get("detail") or payload.get("message") or payload)
         elif payload is None:
             detail = response.text or detail
         raise BackendApiError(response.status_code, detail, payload)
 
     def get_health(self) -> dict[str, Any]:
-        response = requests.get(
-            f"{self.base_url}/health/",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        return self._handle_response(response)
+        return self._request("GET", "/health/")
 
     def upload_document(self, file_path: str) -> dict[str, Any]:
         """Envía un `.docx` a la API backend vía multipart/form-data."""
@@ -87,31 +118,24 @@ class BackendApiClient:
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
             }
-            response = requests.post(
-                f"{self.base_url}/documents/upload/",
-                headers=self._headers(),
-                files=files,
-                timeout=self.timeout,
-            )
-        return self._handle_response(response)
+            return self._request("POST", "/documents/upload/", files=files)
 
-    def process_job(self, job_id: int) -> dict[str, Any]:
+    def process_job(self, job_id: int, *, force: bool = False) -> dict[str, Any]:
         """Dispara procesamiento de job con timeout extendido por operación pesada."""
-        response = requests.post(
-            f"{self.base_url}/jobs/{job_id}/process/",
-            headers=self._headers(),
+        return self._request(
+            "POST",
+            f"/jobs/{job_id}/process/",
+            params={"force": "true"} if force else None,
             timeout=max(self.timeout, 600),
         )
-        return self._handle_response(response)
 
     def reprocess_failed_sources(self, job_id: int) -> dict[str, Any]:
         """Solicita reproceso de fuentes fallidas para un job específico."""
-        response = requests.post(
-            f"{self.base_url}/jobs/{job_id}/reprocess-failed/",
-            headers=self._headers(),
+        return self._request(
+            "POST",
+            f"/jobs/{job_id}/reprocess-failed/",
             timeout=max(self.timeout, 600),
         )
-        return self._handle_response(response)
 
     def reprocess_source_image(
         self,
@@ -119,62 +143,31 @@ class BackendApiClient:
         source_image_id: int,
     ) -> dict[str, Any]:
         """Solicita reproceso puntual de una imagen fuente."""
-        response = requests.post(
-            f"{self.base_url}/jobs/{job_id}/source-images/{source_image_id}/reprocess/",
-            headers=self._headers(),
+        return self._request(
+            "POST",
+            f"/jobs/{job_id}/source-images/{source_image_id}/reprocess/",
             timeout=max(self.timeout, 600),
         )
-        return self._handle_response(response)
 
     def get_job_status(self, job_id: int) -> dict[str, Any]:
-        response = requests.get(
-            f"{self.base_url}/jobs/{job_id}/",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        return self._handle_response(response)
+        return self._request("GET", f"/jobs/{job_id}/")
 
     def list_jobs(self) -> list[dict[str, Any]]:
-        response = requests.get(
-            f"{self.base_url}/jobs/",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        payload = self._handle_response(response)
+        payload = self._request("GET", "/jobs/")
         return payload if isinstance(payload, list) else []
 
     def get_job_logs(self, job_id: int) -> list[dict[str, Any]]:
-        response = requests.get(
-            f"{self.base_url}/jobs/{job_id}/logs/",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        payload = self._handle_response(response)
+        payload = self._request("GET", f"/jobs/{job_id}/logs/")
         return payload if isinstance(payload, list) else []
 
     def export_job_excel(self, job_id: int) -> dict[str, Any]:
-        response = requests.post(
-            f"{self.base_url}/jobs/{job_id}/export/",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        return self._handle_response(response)
+        return self._request("POST", f"/jobs/{job_id}/export/")
 
     def get_processing_settings(self) -> dict[str, Any]:
-        response = requests.get(
-            f"{self.base_url}/processing/settings/",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        return self._handle_response(response)
+        return self._request("GET", "/processing/settings/")
 
     def get_processing_settings_options(self) -> dict[str, Any]:
-        response = requests.get(
-            f"{self.base_url}/processing/settings/options/",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        return self._handle_response(response)
+        return self._request("GET", "/processing/settings/options/")
 
     def assistant_chat(
         self,
@@ -192,19 +185,17 @@ class BackendApiClient:
         }
         if job_id is not None:
             payload["job_id"] = job_id
-        response = requests.post(
-            f"{self.base_url}/assistant/chat/",
-            headers={**self._headers(), "Content-Type": "application/json"},
+        return self._request(
+            "POST",
+            "/assistant/chat/",
+            headers={"Content-Type": "application/json"},
             json=payload,
-            timeout=self.timeout,
         )
-        return self._handle_response(response)
 
     def update_processing_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
-        response = requests.patch(
-            f"{self.base_url}/processing/settings/",
-            headers={**self._headers(), "Content-Type": "application/json"},
+        return self._request(
+            "PATCH",
+            "/processing/settings/",
+            headers={"Content-Type": "application/json"},
             json=updates,
-            timeout=self.timeout,
         )
-        return self._handle_response(response)

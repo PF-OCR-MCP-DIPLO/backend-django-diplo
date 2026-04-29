@@ -116,6 +116,7 @@ def _attempt_payload(attempt: OcrAttempt) -> dict[str, Any]:
         "engine": attempt.engine,
         "provider": attempt.provider,
         "model": attempt.model,
+        "text": attempt.text or "",
         "text_chars": len(attempt.text or ""),
         "text_sample": (attempt.text or "")[:500],
         "score": attempt.score,

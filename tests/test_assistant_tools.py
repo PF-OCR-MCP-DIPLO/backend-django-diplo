@@ -389,6 +389,7 @@ class AssistantToolExecutionTests(TestCase):
         self.assertIn("solo se permiten", payload["detail"].lower())
 
 
+@override_settings(MCP_ENABLE_MUTATIONS=False)
 class AssistantMutationDisabledTests(TestCase):
     def test_mutation_tools_are_disabled_by_default(self):
         executor = ToolExecutionAgent()

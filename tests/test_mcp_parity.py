@@ -91,6 +91,7 @@ class McpParityTests(TestCase):
             self._multiagent_payload("update_deposit_correction", payload, job_id=10),
         )
 
+    @override_settings(MCP_ENABLE_MUTATIONS=False)
     def test_mutation_tool_is_blocked_when_disabled(self):
         envelope = json.loads(mcp_server.process_job(1))
         self.assertFalse(envelope["ok"])
@@ -100,6 +101,7 @@ class McpParityTests(TestCase):
         self.assertFalse(reprocess_envelope["ok"])
         self.assertEqual(reprocess_envelope["status_code"], 403)
 
+    @override_settings(MCP_ENABLE_MUTATIONS=True)
     def test_upload_and_status_match_multiagent(self):
         tmp_path = ""
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:

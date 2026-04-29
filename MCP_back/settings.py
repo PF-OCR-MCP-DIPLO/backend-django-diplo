@@ -232,7 +232,17 @@ DOCX_MAX_IMAGES = int(os.environ.get("DOCX_MAX_IMAGES", "50"))
 EXTRACTED_IMAGE_MAX_BYTES = int(
     os.environ.get("EXTRACTED_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
 )
-MCP_ENABLE_MUTATIONS = os.environ.get("MCP_ENABLE_MUTATIONS", "0") == "1"
+MCP_ENABLE_MUTATIONS = os.environ.get("MCP_ENABLE_MUTATIONS", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+MCP_ALLOWED_UPLOAD_ROOTS = [
+    upload_root.strip()
+    for upload_root in os.environ.get("MCP_ALLOWED_UPLOAD_ROOTS", "").split(os.pathsep)
+    if upload_root.strip()
+]
 
 # Enables deterministic stub OCR/LLM providers for E2E and local demos.
 STUB_PROVIDERS = os.environ.get("STUB_PROVIDERS", "0") == "1"

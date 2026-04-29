@@ -6,8 +6,9 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone as datetime_timezone
-from decimal import Decimal
+from datetime import date, datetime, time, timedelta
+from datetime import timezone as datetime_timezone
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from django.conf import settings
@@ -16,32 +17,6 @@ from django.db.models import Avg, Count, Max, Min, Sum
 from django.utils import timezone
 from django.utils.timezone import is_aware
 
-from apps.api.services.shared_tools import upload_document_from_path
-from apps.api.services.assistant_tasks import (
-    AssistantTask,
-    build_assistant_task_context,
-    resolve_assistant_task,
-)
-from apps.api.services.pending_actions import (
-    build_pending_action,
-    clear_pending_action,
-    confirmation_message,
-    normalize_pending_action,
-    validate_pending_action,
-)
-from apps.api.services.deposit_correction_tools import (
-    deposit_correction_confirmation_message,
-    deposit_correction_has_updates,
-    deposit_correction_failure_description,
-    deposit_correction_needs_clarification,
-    deposit_correction_payload_for_correction,
-    deposit_correction_success_description,
-    deposit_correction_summary,
-    deposit_correction_values_from_arguments,
-    execute_deposit_correction,
-    extract_deposit_correction_deposit_id,
-    normalize_deposit_correction_arguments,
-)
 from apps.api.serializers import (
     ExtractionLogSerializer,
     ProcessingSettingsSerializer,
@@ -53,6 +28,32 @@ from apps.api.services.assistant_llm import (
     AssistantTextClient,
     TextGenerationConfig,
 )
+from apps.api.services.assistant_tasks import (
+    AssistantTask,
+    build_assistant_task_context,
+    resolve_assistant_task,
+)
+from apps.api.services.deposit_correction_tools import (
+    deposit_correction_confirmation_message,
+    deposit_correction_failure_description,
+    deposit_correction_has_updates,
+    deposit_correction_needs_clarification,
+    deposit_correction_payload_for_correction,
+    deposit_correction_success_description,
+    deposit_correction_summary,
+    deposit_correction_values_from_arguments,
+    execute_deposit_correction,
+    extract_deposit_correction_deposit_id,
+    normalize_deposit_correction_arguments,
+)
+from apps.api.services.pending_actions import (
+    build_pending_action,
+    clear_pending_action,
+    confirmation_message,
+    normalize_pending_action,
+    validate_pending_action,
+)
+from apps.api.services.shared_tools import upload_document_from_path
 from apps.api.services.tool_risk import get_tool_risk_level, tool_requires_confirmation
 from apps.processing.models import (
     ExtractedDeposit,
@@ -71,7 +72,6 @@ from apps.processing.services.settings_service import (
     get_or_create_processing_settings,
     get_runtime_config,
 )
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 _ALLOWED_TOOLS = {
     "none",
@@ -2312,6 +2312,10 @@ class ToolExecutionAgent:
             return ProcessRunDetailSerializer(exported, context={"request": None}).data
 
         if plan.tool == "upload_document":
+            if not _mutation_tools_enabled():
+                return {
+                    "detail": "upload_document is disabled by server configuration."
+                }
             file_path = plan.arguments.get("file_path")
             if not isinstance(file_path, str) or not file_path.strip():
                 return {"detail": "file_path is required"}

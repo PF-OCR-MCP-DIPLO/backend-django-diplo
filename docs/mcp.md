@@ -1,6 +1,8 @@
 # MCP server for backend-django-diplo
 
-This project includes an MCP server that exposes business tools over the existing Django REST API.
+This project includes an MCP server that exposes business tools over the
+existing Django services. The HTTP client remains available only as an optional
+legacy/fallback adapter for integrations that need to call the REST API.
 
 ## Implemented tools
 
@@ -12,6 +14,8 @@ This project includes an MCP server that exposes business tools over the existin
 - get_job_logs
 - list_job_logs (deprecated alias)
 - export_job_excel
+- reprocess_failed_sources
+- reprocess_source_image
 - get_processing_settings
 - get_processing_settings_options
 - update_processing_settings
@@ -21,12 +25,35 @@ This project includes an MCP server that exposes business tools over the existin
 - get_last_record_value
 - get_completed_records_summary
 
+## Implemented resources and prompts
+
+Read-only resources:
+
+- `diplo://health`
+- `diplo://capabilities`
+- `diplo://jobs`
+- `diplo://jobs/{job_id}`
+- `diplo://jobs/{job_id}/logs`
+- `diplo://processing/settings`
+
+Reusable prompts:
+
+- `diagnose_job`
+- `explain_results`
+- `prepare_reprocessing`
+
 ## Environment variables
 
 - No environment variables are required for the default local mode.
+- `MCP_ENABLE_MUTATIONS=1` enables mutating tools. When disabled, upload,
+  processing, reprocessing, export, corrections, settings updates and CRUD
+  mutations return a controlled `403` envelope.
+- `MCP_ALLOWED_UPLOAD_ROOTS` optionally restricts `upload_document` to absolute
+  `.docx` paths inside one of the configured roots. Multiple roots are separated
+  with the OS path separator.
 - Legacy HTTP client variables are kept only for optional compatibility/fallback paths:
   - MCP_BACKEND_BASE_URL: backend API base url, default `http://127.0.0.1:8000/api`
-  - MCP_BACKEND_API_TOKEN: optional bearer token
+  - MCP_BACKEND_API_TOKEN: optional value sent as `X-API-Key`
   - MCP_BACKEND_TIMEOUT: request timeout in seconds, default `60`
 
 ## Run
@@ -53,6 +80,8 @@ python -m mcp_server.server
 ```json
 {
   "ok": true,
+  "status_code": null,
+  "detail": null,
   "data": {}
 }
 ```
@@ -62,8 +91,9 @@ On backend errors:
 ```json
 {
   "ok": false,
-  "status_code": 409,
-  "detail": "Only completed jobs can be exported.",
-  "payload": {"detail": "Only completed jobs can be exported."}
+  "status_code": 403,
+  "detail": "process_job is disabled by server configuration.",
+  "data": null,
+  "code": "mutation_disabled"
 }
 ```
