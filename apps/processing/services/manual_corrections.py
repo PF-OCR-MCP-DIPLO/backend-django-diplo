@@ -64,11 +64,14 @@ def apply_deposit_corrections(process_run: ProcessRun, items: list[dict]) -> Pro
                 item["fecha_consignacion"],
                 item,
                 runtime_config.extraction_criteria,
+                runtime_config.valid_consignation_month,
+                runtime_config.valid_consignation_year,
             )
             deposit.fecha_consignacion = item["fecha_consignacion"]
             deposit.hora_consignacion = item["hora_consignacion"]
             deposit.referencia = item["referencia"]
             deposit.valor = item["valor"]
+            # Legacy field name kept for compatibility with existing clients.
             deposit.is_current_month = is_current_month
             deposit.observations = observations
             deposit.structured_payload = {

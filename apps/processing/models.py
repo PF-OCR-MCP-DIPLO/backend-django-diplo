@@ -9,6 +9,16 @@ from django.conf import settings
 from django.utils import timezone
 
 
+def default_valid_consignation_month():
+    """Mes inicial sugerido al crear settings; no es regla de negocio."""
+    return timezone.localdate().month
+
+
+def default_valid_consignation_year():
+    """Año inicial sugerido al crear settings; no es regla de negocio."""
+    return timezone.localdate().year
+
+
 class ProcessRun(models.Model):
     """Unidad principal de trazabilidad del flujo de procesamiento.
 
@@ -143,6 +153,12 @@ class ProcessingSettings(models.Model):
     assistant_num_predict = models.PositiveIntegerField(default=256)
     assistant_show_debug_details = models.BooleanField(default=False)
     request_timeout_seconds = models.PositiveIntegerField(default=320)
+    valid_consignation_month = models.PositiveSmallIntegerField(
+        default=default_valid_consignation_month
+    )
+    valid_consignation_year = models.PositiveSmallIntegerField(
+        default=default_valid_consignation_year
+    )
     extraction_criteria = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

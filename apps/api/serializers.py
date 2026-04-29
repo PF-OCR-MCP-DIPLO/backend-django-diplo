@@ -173,6 +173,12 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
     )
     extraction_criteria = serializers.JSONField(required=False)
     assistant_show_debug_details = serializers.BooleanField(required=False)
+    valid_consignation_month = serializers.IntegerField(
+        required=False, min_value=1, max_value=12
+    )
+    valid_consignation_year = serializers.IntegerField(
+        required=False, min_value=2000, max_value=2100
+    )
 
     class Meta:
         model = ProcessingSettings
@@ -195,6 +201,8 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "assistant_temperature",
             "assistant_num_predict",
             "request_timeout_seconds",
+            "valid_consignation_month",
+            "valid_consignation_year",
             "updated_at",
         ]
 

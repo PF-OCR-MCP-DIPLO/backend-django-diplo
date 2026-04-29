@@ -2,8 +2,6 @@
 
 from datetime import datetime
 
-from django.utils import timezone
-
 
 def _field_value(record, field_name):
     """Obtiene un campo de un registro potencialmente parcial."""
@@ -66,8 +64,18 @@ def _validate_criteria_rules(record, criteria):
     return observations
 
 
-def build_record_observations(fecha_consignacion, record=None, criteria=None):
-    """Construye observaciones de validación y marca si la fecha pertenece al mes actual."""
+def build_record_observations(
+    fecha_consignacion,
+    record=None,
+    criteria=None,
+    valid_consignation_month=None,
+    valid_consignation_year=None,
+):
+    """Construye observaciones y valida contra el periodo configurado.
+
+    `is_current_month` se conserva en capas superiores por compatibilidad, pero
+    desde aquí significa "pertenece al periodo válido configurado".
+    """
     observations = []
     if not fecha_consignacion:
         observations.append("Fecha no identificada")
@@ -79,11 +87,13 @@ def build_record_observations(fecha_consignacion, record=None, criteria=None):
         observations.append("Fecha invalida")
         observations.extend(_validate_criteria_rules(record or {}, criteria))
         return observations, None
-    today = timezone.localdate()
-    is_current_month = (
-        extracted_date.month == today.month and extracted_date.year == today.year
-    )
-    if not is_current_month:
-        observations.append("Fecha fuera del mes actual")
+    is_current_month = None
+    if valid_consignation_month is not None and valid_consignation_year is not None:
+        is_current_month = (
+            extracted_date.month == valid_consignation_month
+            and extracted_date.year == valid_consignation_year
+        )
+    if is_current_month is False:
+        observations.append("Fecha fuera del periodo valido configurado")
     observations.extend(_validate_criteria_rules(record or {}, criteria))
     return observations, is_current_month

@@ -83,6 +83,8 @@ class ValidationPersistenceAgent:
                 structured_record.get("fecha_consignacion"),
                 structured_record,
                 runtime_config.extraction_criteria,
+                runtime_config.valid_consignation_month,
+                runtime_config.valid_consignation_year,
             )
 
             ExtractedDeposit.objects.create(
@@ -93,6 +95,8 @@ class ValidationPersistenceAgent:
                 hora_consignacion=structured_record.get("hora_consignacion") or "",
                 referencia=referencia,
                 valor=valor,
+                # Legacy name kept for API/UI compatibility: true means the
+                # deposit belongs to the configured valid period.
                 is_current_month=is_current_month,
                 observations=observations,
                 structured_payload=structured_record,

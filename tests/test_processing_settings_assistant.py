@@ -20,6 +20,8 @@ class ProcessingSettingsAssistantTests(TestCase):
                 "assistant_show_debug_details": True,
                 "assistant_temperature": 0.4,
                 "assistant_num_predict": 512,
+                "valid_consignation_month": 4,
+                "valid_consignation_year": 2026,
                 "extraction_criteria": default_extraction_criteria(),
             },
             partial=True,
@@ -31,9 +33,30 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertTrue(updated.assistant_show_debug_details)
         self.assertEqual(updated.assistant_temperature, 0.4)
         self.assertEqual(updated.assistant_num_predict, 512)
+        self.assertEqual(updated.valid_consignation_month, 4)
+        self.assertEqual(updated.valid_consignation_year, 2026)
         self.assertEqual(
             updated.extraction_criteria["fields"][0]["key"], "fecha_consignacion"
         )
+
+    def test_serializer_rejects_invalid_valid_consignation_period(self):
+        settings_obj = get_or_create_processing_settings()
+
+        invalid_cases = [
+            {"valid_consignation_month": 0},
+            {"valid_consignation_month": 13},
+            {"valid_consignation_year": 1999},
+            {"valid_consignation_year": 2101},
+        ]
+
+        for payload in invalid_cases:
+            with self.subTest(payload=payload):
+                serializer = ProcessingSettingsSerializer(
+                    settings_obj,
+                    data=payload,
+                    partial=True,
+                )
+                self.assertFalse(serializer.is_valid())
 
     def test_serializer_rejects_missing_ollama_assistant_model(self):
         settings_obj = get_or_create_processing_settings()
@@ -50,6 +73,8 @@ class ProcessingSettingsAssistantTests(TestCase):
         settings_obj.assistant_provider = "ollama"
         settings_obj.assistant_model = "assistant-test"
         settings_obj.llm_model = "llm-test"
+        settings_obj.valid_consignation_month = 4
+        settings_obj.valid_consignation_year = 2026
         settings_obj.save()
 
         from apps.processing.services.settings_service import get_runtime_config
@@ -57,6 +82,8 @@ class ProcessingSettingsAssistantTests(TestCase):
         runtime = get_runtime_config()
         self.assertEqual(runtime.assistant_model, "assistant-test")
         self.assertEqual(runtime.llm_model, "llm-test")
+        self.assertEqual(runtime.valid_consignation_month, 4)
+        self.assertEqual(runtime.valid_consignation_year, 2026)
         self.assertIn("fields", runtime.extraction_criteria)
         self.assertFalse(runtime.assistant_show_debug_details)
 

@@ -117,6 +117,32 @@ class ExtractionSchemaTests(SimpleTestCase):
                 "valor": 50000.0,
             },
             criteria,
+            4,
+            2026,
         )
         self.assertTrue(is_current_month)
         self.assertIn("La referencia debe ser REF001", observations)
+
+    def test_build_record_observations_uses_configured_period(self):
+        observations, is_current_month = build_record_observations(
+            "15/03/2026",
+            {"fecha_consignacion": "15/03/2026"},
+            default_extraction_criteria(),
+            4,
+            2026,
+        )
+
+        self.assertFalse(is_current_month)
+        self.assertIn("Fecha fuera del periodo valido configurado", observations)
+
+    def test_build_record_observations_does_not_depend_on_system_month(self):
+        observations, is_current_month = build_record_observations(
+            "15/04/2026",
+            {"fecha_consignacion": "15/04/2026"},
+            default_extraction_criteria(),
+            4,
+            2026,
+        )
+
+        self.assertTrue(is_current_month)
+        self.assertNotIn("Fecha fuera del periodo valido configurado", observations)

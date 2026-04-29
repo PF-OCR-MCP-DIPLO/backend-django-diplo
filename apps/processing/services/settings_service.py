@@ -1,6 +1,7 @@
 """Acceso, normalización y snapshot de configuración de procesamiento."""
 
 from dataclasses import dataclass
+from django.utils import timezone
 
 from django.conf import settings
 
@@ -50,11 +51,14 @@ class RuntimeProcessingConfig:
     ocr_api_key: str
     llm_api_key: str
     request_timeout_seconds: int
+    valid_consignation_month: int
+    valid_consignation_year: int
     extraction_criteria: dict
 
 
 def get_or_create_processing_settings():
     """Obtiene o crea el singleton de configuración con valores por defecto."""
+    current_date = timezone.localdate()
     defaults = {
         "ocr_mode": ProcessingSettings.OCRMode.VISION,
         "ocr_provider": ProcessingSettings.Provider.OLLAMA,
@@ -67,6 +71,8 @@ def get_or_create_processing_settings():
         ),
         "assistant_show_debug_details": False,
         "request_timeout_seconds": settings.OLLAMA_TIMEOUT,
+        "valid_consignation_month": current_date.month,
+        "valid_consignation_year": current_date.year,
         "extraction_criteria": default_extraction_criteria(),
     }
     instance, _ = ProcessingSettings.objects.get_or_create(
@@ -121,6 +127,8 @@ def get_runtime_config():
         ocr_api_key=config.ocr_api_key,
         llm_api_key=config.llm_api_key,
         request_timeout_seconds=config.request_timeout_seconds,
+        valid_consignation_month=config.valid_consignation_month,
+        valid_consignation_year=config.valid_consignation_year,
         extraction_criteria=normalize_extraction_criteria(config.extraction_criteria),
     )
 
@@ -145,6 +153,8 @@ def as_snapshot_dict(runtime_config):
         "assistant_temperature": runtime_config.assistant_temperature,
         "assistant_num_predict": runtime_config.assistant_num_predict,
         "request_timeout_seconds": runtime_config.request_timeout_seconds,
+        "valid_consignation_month": runtime_config.valid_consignation_month,
+        "valid_consignation_year": runtime_config.valid_consignation_year,
         "extraction_criteria": runtime_config.extraction_criteria,
     }
 

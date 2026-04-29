@@ -202,6 +202,17 @@ class DocumentApiTests(TestCase):
         self.assertEqual(payload["error"]["code"], "not_found")
 
     def test_upload_process_export_and_detail(self):
+        settings_obj = get_or_create_processing_settings()
+        settings_obj.valid_consignation_month = 4
+        settings_obj.valid_consignation_year = 2026
+        settings_obj.save(
+            update_fields=[
+                "valid_consignation_month",
+                "valid_consignation_year",
+                "updated_at",
+            ]
+        )
+
         upload = SimpleUploadedFile(
             "consignaciones.docx",
             self.docx_bytes,
@@ -257,7 +268,7 @@ class DocumentApiTests(TestCase):
         self.assertEqual(processed["source_images"][0]["ocr_status"], "processed")
         self.assertEqual(
             processed["source_images"][1]["deposits"][0]["observations"],
-            ["Fecha fuera del mes actual"],
+            ["Fecha fuera del periodo valido configurado"],
         )
         export_response = self.client.post(f"/api/jobs/{job_id}/export/")
         self.assertEqual(export_response.status_code, 200)
@@ -409,6 +420,8 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["ocr_mode"], "vision")
+        self.assertIn("valid_consignation_month", payload)
+        self.assertIn("valid_consignation_year", payload)
         self.assertFalse(payload["has_ocr_api_key"])
         self.assertFalse(payload["has_llm_api_key"])
         patch_response = self.client.patch(
@@ -420,10 +433,14 @@ class DocumentApiTests(TestCase):
                 "llm_provider": "ollama",
                 "llm_model": "gemma3:1b-it-qat",
                 "request_timeout_seconds": 120,
+                "valid_consignation_month": 4,
+                "valid_consignation_year": 2026,
             },
             format="json",
         )
         self.assertEqual(patch_response.status_code, 200)
+        self.assertEqual(patch_response.json()["valid_consignation_month"], 4)
+        self.assertEqual(patch_response.json()["valid_consignation_year"], 2026)
         options_response = self.client.get("/api/processing/settings/options/")
         self.assertEqual(options_response.status_code, 200)
         self.assertIn("auto", options_response.json()["ocr_modes"])
@@ -539,6 +556,22 @@ class DocumentApiTests(TestCase):
         self.assertIn("ocr_model", details)
         self.assertIn("llm_model", details)
         self.assertIn("request_timeout_seconds", details)
+
+    def test_settings_validation_rejects_invalid_valid_consignation_period(self):
+        response = self.client.patch(
+            "/api/processing/settings/",
+            {
+                "valid_consignation_month": 13,
+                "valid_consignation_year": 1999,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "validation_error")
+        self.assertIn("valid_consignation_month", payload["error"]["details"])
+        self.assertIn("valid_consignation_year", payload["error"]["details"])
 
     def test_settings_tesseract_normalizes_provider(self):
         response = self.client.patch(
