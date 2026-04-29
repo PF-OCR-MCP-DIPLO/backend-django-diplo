@@ -1,5 +1,7 @@
 .git
 .github
+.env
+.env.production
 __pycache__
 *.pyc
 *.pyo
@@ -16,4 +18,3 @@ docs
 *.xlsx
 .coverage*
 htmlcov
-
