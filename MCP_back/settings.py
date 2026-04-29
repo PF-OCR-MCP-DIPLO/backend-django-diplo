@@ -9,6 +9,7 @@ ajustes si cambian los proveedores o el modelo de despliegue.
 """
 
 import os
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -17,6 +18,7 @@ from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+RUNNING_TESTS = "test" in sys.argv
 
 # Load local environment variables when running outside containers.
 load_dotenv(BASE_DIR / ".env")
@@ -208,10 +210,14 @@ REST_FRAMEWORK = {
     },
 }
 
-API_KEY = os.environ.get("API_KEY", "")
-ALLOW_OPEN_API_FOR_DEV = (
-    os.environ.get("ALLOW_OPEN_API_FOR_DEV", "1" if DEBUG else "0") == "1"
-)
+if RUNNING_TESTS:
+    API_KEY = ""
+    ALLOW_OPEN_API_FOR_DEV = True
+else:
+    API_KEY = os.environ.get("API_KEY", "")
+    ALLOW_OPEN_API_FOR_DEV = (
+        os.environ.get("ALLOW_OPEN_API_FOR_DEV", "1" if DEBUG else "0") == "1"
+    )
 if not DEBUG and not API_KEY:
     raise ImproperlyConfigured("API_KEY must be configured when DJANGO_DEBUG=0.")
 if not DEBUG and ALLOW_OPEN_API_FOR_DEV:

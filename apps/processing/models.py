@@ -6,6 +6,7 @@ guarda trazabilidad suficiente para auditoría y reproceso parcial.
 
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 
 class ProcessRun(models.Model):
@@ -94,7 +95,7 @@ class ExtractedDeposit(models.Model):
     is_current_month = models.BooleanField(blank=True, null=True)
     observations = models.JSONField(default=list, blank=True)
     structured_payload = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         ordering = ["sequence_index", "id"]

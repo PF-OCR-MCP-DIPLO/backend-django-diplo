@@ -44,7 +44,7 @@ def start_job_processing(process_run: ProcessRun, *, force: bool = False) -> Pro
 
     worker = threading.Thread(
         target=_run_job_in_background,
-        args=(prepared_job.pk, runtime_config),
+        args=(prepared_job.pk, runtime_config, threading.get_ident()),
         daemon=True,
         name=f"process-job-{prepared_job.pk}",
     )
@@ -52,9 +52,11 @@ def start_job_processing(process_run: ProcessRun, *, force: bool = False) -> Pro
     return prepared_job
 
 
-def _run_job_in_background(job_id, runtime_config):
+def _run_job_in_background(job_id, runtime_config, parent_thread_id=None):
     """Ejecuta el pipeline en un hilo aislado y limpia el registro de corrida."""
-    close_old_connections()
+    running_in_worker_thread = parent_thread_id != threading.get_ident()
+    if running_in_worker_thread:
+        close_old_connections()
     try:
         process_run = ProcessRun.objects.get(pk=job_id)
         process_prepared_job(process_run, runtime_config)
@@ -64,4 +66,5 @@ def _run_job_in_background(job_id, runtime_config):
     finally:
         with _running_jobs_lock:
             _running_jobs.discard(job_id)
-        close_old_connections()
+        if running_in_worker_thread:
+            close_old_connections()

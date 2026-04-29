@@ -138,6 +138,7 @@ class ProcessingSupervisorAgent:
         attempt_number = 1
         current_config = deepcopy(runtime_config)
         final_records = []
+        unrecoverable_error = None
 
         # Loop de reintentos
         while attempt_number <= self.retry_agent.MAX_RETRIES_PER_IMAGE:
@@ -275,6 +276,7 @@ class ProcessingSupervisorAgent:
                     not retry_decision.should_retry
                     or attempt_number >= self.retry_agent.MAX_RETRIES_PER_IMAGE
                 ):
+                    unrecoverable_error = e
                     log_callback(
                         process_run,
                         source_image,
@@ -289,6 +291,9 @@ class ProcessingSupervisorAgent:
                     current_config, retry_decision
                 )
                 attempt_number += 1
+
+        if unrecoverable_error is not None:
+            raise unrecoverable_error
 
         # === PERSISTENCIA ===
         records_count = self._persist_records(

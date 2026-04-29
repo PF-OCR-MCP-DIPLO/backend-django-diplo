@@ -79,18 +79,18 @@ def get_runtime_config():
     """Construye una vista inmutable de la configuración activa."""
     config = get_or_create_processing_settings()
 
-    resolved_ocr_mode = (
-        getattr(settings, "OCR_MODE", config.ocr_mode) or config.ocr_mode
+    resolved_ocr_mode = config.ocr_mode or getattr(
+        settings, "OCR_MODE", ProcessingSettings.OCRMode.VISION
     )
-    resolved_ocr_provider = (
-        getattr(settings, "OCR_PROVIDER", config.ocr_provider) or config.ocr_provider
+    resolved_ocr_provider = config.ocr_provider or getattr(
+        settings, "OCR_PROVIDER", ProcessingSettings.Provider.OLLAMA
     )
     resolved_ocr_provider = normalize_ocr_provider(resolved_ocr_provider)
 
     # Preferimos el modelo vision si el modo es vision/auto y el valor guardado
     # todavía apunta al lenguaje de Tesseract.
     resolved_ocr_model = (
-        getattr(settings, "OCR_MODEL", config.ocr_model) or ""
+        config.ocr_model or getattr(settings, "OCR_MODEL", "")
     ).strip()
     if resolved_ocr_mode in (
         ProcessingSettings.OCRMode.VISION,

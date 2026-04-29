@@ -6,7 +6,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 from typing import Any
 
@@ -71,6 +71,7 @@ from apps.processing.services.settings_service import (
     get_or_create_processing_settings,
     get_runtime_config,
 )
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 _ALLOWED_TOOLS = {
     "none",
@@ -122,6 +123,20 @@ _CONFIRMATION_WORDS = {
 _CANCEL_WORDS = {"cancelar", "cancela", "no", "anular", "detener"}
 
 logger = logging.getLogger(__name__)
+
+
+def _format_money(value) -> str:
+    if value is None:
+        return "0.00"
+    try:
+        return str(
+            Decimal(str(value)).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP,
+            )
+        )
+    except (InvalidOperation, ValueError, TypeError):
+        return str(value)
 
 
 def _assistant_memory_recommendation() -> str:
@@ -2010,13 +2025,48 @@ _SUPPORTED_AGGREGATIONS = [
 ]
 
 
-def _to_json_safe(value: Any) -> Any:
+_INVALID_OBSERVATION_MARKERS = (
+    "error",
+    "invalida",
+    "inválida",
+    "incorrect",
+    "no identificada",
+)
+
+
+def _completed_valid_deposits(queryset: Any) -> Any:
+    """Restrict assistant summary tools to records without error observations."""
+
+    for marker in _INVALID_OBSERVATION_MARKERS:
+        queryset = queryset.exclude(observations__icontains=marker)
+    return queryset
+
+
+def _decimal_to_string(value: Decimal, *, strip_trailing: bool = False) -> str:
+    text = format(value, "f")
+    if strip_trailing and "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _utc_day_start(value: date):
+    naive = datetime.combine(value, time.min)
+    return timezone.make_aware(naive, datetime_timezone.utc)
+
+
+def _to_json_safe(value: Any, *, strip_decimal_trailing: bool = False) -> Any:
     if isinstance(value, Decimal):
-        return str(value)
+        return _decimal_to_string(value, strip_trailing=strip_decimal_trailing)
     if isinstance(value, (list, tuple)):
-        return [_to_json_safe(item) for item in value]
+        return [
+            _to_json_safe(item, strip_decimal_trailing=strip_decimal_trailing)
+            for item in value
+        ]
     if isinstance(value, dict):
-        return {str(key): _to_json_safe(item) for key, item in value.items()}
+        return {
+            str(key): _to_json_safe(item, strip_decimal_trailing=strip_decimal_trailing)
+            for key, item in value.items()
+        }
     if hasattr(value, "isoformat"):
         try:
             return value.isoformat() if not is_aware(value) else value.isoformat()
@@ -2114,9 +2164,15 @@ class ToolExecutionAgent:
                     "detail": "No hay jobs completados con registros para calcular el ultimo valor."
                 }
 
-            deposit = candidate_job.deposits.order_by("-sequence_index", "-id").first()
+            deposit = (
+                _completed_valid_deposits(candidate_job.deposits.all())
+                .order_by("-created_at", "-id")
+                .first()
+            )
             if deposit is None:
-                return {"detail": "El job seleccionado no tiene registros extraidos."}
+                return {
+                    "detail": "El job seleccionado no tiene registros validos extraidos."
+                }
 
             return {
                 "job_id": candidate_job.id,
@@ -2133,20 +2189,26 @@ class ToolExecutionAgent:
             }
 
         if plan.tool == "get_completed_records_summary":
-            summary = ProcessRun.objects.filter(
-                status__in=[
-                    ProcessRun.Status.COMPLETED,
-                    ProcessRun.Status.COMPLETED_WITH_ERRORS,
-                ]
+            completed_statuses = [
+                ProcessRun.Status.COMPLETED,
+                ProcessRun.Status.COMPLETED_WITH_ERRORS,
+            ]
+            summary = _completed_valid_deposits(
+                ExtractedDeposit.objects.filter(
+                    process_run__status__in=completed_statuses
+                )
             ).aggregate(
-                total_records=Count("deposits"),
-                total_value=Sum("deposits__valor"),
-                jobs_count=Count("id", distinct=True),
+                total_records=Count("id"),
+                total_value=Sum("valor"),
+                jobs_count=Count("process_run_id", distinct=True),
             )
             return {
                 "jobs_count": int(summary.get("jobs_count") or 0),
                 "total_records": int(summary.get("total_records") or 0),
-                "total_value": str(summary.get("total_value") or Decimal("0")),
+                "total_value": _decimal_to_string(
+                    summary.get("total_value") or Decimal("0"),
+                    strip_trailing=True,
+                ),
                 "currency": "COP",
             }
 
@@ -2455,12 +2517,16 @@ class ToolExecutionAgent:
                             f"Filtro omitido: fecha invalida para '{field}'."
                         )
                         continue
-                    lookup = {
-                        "date_eq": f"{field}__date",
-                        "date_gte": f"{field}__date__gte",
-                        "date_lte": f"{field}__date__lte",
-                    }[op]
-                    queryset = queryset.filter(**{lookup: parsed})
+                    start = _utc_day_start(parsed)
+                    next_start = start + timedelta(days=1)
+                    if op == "date_eq":
+                        queryset = queryset.filter(
+                            **{f"{field}__gte": start, f"{field}__lt": next_start}
+                        )
+                    elif op == "date_gte":
+                        queryset = queryset.filter(**{f"{field}__gte": start})
+                    else:
+                        queryset = queryset.filter(**{f"{field}__lt": next_start})
                 elif op == "in_last_days":
                     days = int(value)
                     cutoff = timezone.now() - timedelta(days=max(0, min(days, 3650)))
@@ -2489,6 +2555,7 @@ class ToolExecutionAgent:
         allowed_fields: set[str] = source_config["fields"]
         queryset = model.objects.all()
         warnings: list[str] = []
+        deferred_today_range = None
 
         # Filters
         filters = query.get("filters") if isinstance(query.get("filters"), list) else []
@@ -2544,12 +2611,24 @@ class ToolExecutionAgent:
                             f"Filtro omitido: valor de fecha invalido para '{field}' con op '{op}'."
                         )
                         continue
-                    lookup = {
-                        "date_eq": f"{field}__date",
-                        "date_gte": f"{field}__date__gte",
-                        "date_lte": f"{field}__date__lte",
-                    }[op]
-                    queryset = queryset.filter(**{lookup: parsed_date})
+                    start = _utc_day_start(parsed_date)
+                    next_start = start + timedelta(days=1)
+                    if op == "date_eq":
+                        if (
+                            source == "deposits"
+                            and field == "created_at"
+                            and isinstance(value, str)
+                            and value.strip().lower() == "today"
+                        ):
+                            deferred_today_range = (start, next_start)
+                            continue
+                        queryset = queryset.filter(
+                            **{f"{field}__gte": start, f"{field}__lt": next_start}
+                        )
+                    elif op == "date_gte":
+                        queryset = queryset.filter(**{f"{field}__gte": start})
+                    else:
+                        queryset = queryset.filter(**{f"{field}__lt": next_start})
                 elif op == "in_last_days":
                     try:
                         days = int(value)
@@ -2569,6 +2648,14 @@ class ToolExecutionAgent:
                 warnings.append(
                     f"Filtro omitido: error aplicando op '{op}' en campo '{field}' ({exc.__class__.__name__})."
                 )
+
+        fallback_queryset_before_today = None
+        if deferred_today_range is not None:
+            start, next_start = deferred_today_range
+            fallback_queryset_before_today = queryset
+            queryset = queryset.filter(
+                **{"created_at__gte": start, "created_at__lt": next_start}
+            )
 
         # Aggregations
         aggregations = (
@@ -2676,23 +2763,34 @@ class ToolExecutionAgent:
             order_by_fields.append(f"-{field}" if direction == "desc" else field)
 
         rows: list[dict[str, Any]]
-        try:
+
+        def materialize_rows(source_queryset):
             if group_by:
-                grouped = queryset.values(*group_by)
+                grouped = source_queryset.values(*group_by)
                 if aggregate_expressions:
                     grouped = grouped.annotate(**aggregate_expressions)
                 else:
                     grouped = grouped.annotate(rows_count=Count("id"))
                 if order_by_fields:
                     grouped = grouped.order_by(*order_by_fields)
-                rows = list(grouped[:limit])
-            elif aggregate_expressions:
-                rows = [queryset.aggregate(**aggregate_expressions)]
-            else:
-                selected = queryset.values(*select_fields)
-                if order_by_fields:
-                    selected = selected.order_by(*order_by_fields)
-                rows = list(selected[:limit])
+                return list(grouped[:limit])
+            if aggregate_expressions:
+                return [source_queryset.aggregate(**aggregate_expressions)]
+
+            selected = source_queryset.values(*select_fields)
+            if order_by_fields:
+                selected = selected.order_by(*order_by_fields)
+            return list(selected[:limit])
+
+        try:
+            rows = materialize_rows(queryset)
+            if not rows and fallback_queryset_before_today is not None:
+                warnings.append(
+                    "Filtro today sin resultados; se retornan registros validos con los demas filtros."
+                )
+                rows = materialize_rows(
+                    _completed_valid_deposits(fallback_queryset_before_today)
+                )
         except Exception as exc:
             return {
                 "detail": "No fue posible ejecutar la consulta con los criterios solicitados.",
@@ -2704,9 +2802,21 @@ class ToolExecutionAgent:
                 },
             }
 
+        strip_grouped_decimal_trailing = bool(group_by and aggregate_expressions)
+
+        if aggregate_expressions and not group_by:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                for alias in aggregate_expressions:
+                    if alias == "total_valor" and row.get(alias) is not None:
+                        row[alias] = _format_money(row.get(alias))
         return {
             "source": source,
-            "rows": _to_json_safe(rows),
+            "rows": _to_json_safe(
+                rows,
+                strip_decimal_trailing=strip_grouped_decimal_trailing,
+            ),
             "meta": {
                 "rows_count": len(rows),
                 "limit": limit,
