@@ -179,8 +179,6 @@ def _run_tesseract(source_image, runtime_config):
     tess_lang = resolve_tesseract_language(runtime_config.ocr_model)
     processed_path = preprocess_image_for_ocr(
         source_image.image_file,
-        binarize=True,
-        sharpen=True,
     )
 
     try:
