@@ -14,6 +14,9 @@ nav:
       - Primeros pasos: getting-started.md
       - Configuración: configuration.md
       - Desarrollo: development.md
+      - Contrato API: api-contract.md
+      - Pipeline de procesamiento: processing-pipeline.md
+      - Troubleshooting OCR: ocr-troubleshooting.md
       - Pruebas: testing.md
       - Troubleshooting: troubleshooting.md
 
