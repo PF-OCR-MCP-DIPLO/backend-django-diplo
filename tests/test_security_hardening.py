@@ -51,8 +51,10 @@ class UploadSecurityTests(TestCase):
         with self.assertRaises(UploadValidationError) as raised:
             create_process_run_from_upload(upload)
 
-        self.assertEqual(raised.exception.code, "invalid_docx")
-        self.assertIn("more images than allowed", raised.exception.details["reason"])
+        self.assertEqual(raised.exception.code, "docx_too_many_images")
+        self.assertIn(
+            "more processable images than allowed", raised.exception.details["reason"]
+        )
 
     @override_settings(EXTRACTED_IMAGE_MAX_BYTES=40)
     def test_upload_rejects_oversized_embedded_image(self):
@@ -65,7 +67,7 @@ class UploadSecurityTests(TestCase):
         with self.assertRaises(UploadValidationError) as raised:
             create_process_run_from_upload(upload)
 
-        self.assertEqual(raised.exception.code, "invalid_docx")
+        self.assertEqual(raised.exception.code, "docx_unsupported_content")
         self.assertIn("maximum allowed size", raised.exception.details["reason"])
 
 

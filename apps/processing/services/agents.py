@@ -14,6 +14,14 @@ from dataclasses import replace
 SIGNIFICANT_OCR_MIN_CHARS = 20
 
 
+def _active_ocr_model(runtime_config):
+    if runtime_config.ocr_mode == "vision":
+        return runtime_config.vision_model
+    if runtime_config.ocr_mode == "auto":
+        return f"{runtime_config.ocr_model}|vision:{runtime_config.vision_model}"
+    return runtime_config.ocr_model
+
+
 def _has_significant_ocr_text(text):
     value = (text or "").strip()
     return len(value) >= SIGNIFICANT_OCR_MIN_CHARS and score_ocr_text(value) > 0
@@ -46,7 +54,7 @@ class OCRAgent:
             stage="image_validation",
             runtime_config=runtime_config,
             provider=runtime_config.ocr_provider,
-            model=runtime_config.ocr_model,
+            model=_active_ocr_model(runtime_config),
         ):
             validate_source_image(source_image)
         with stage_timer(
@@ -55,7 +63,7 @@ class OCRAgent:
             stage="ocr",
             runtime_config=runtime_config,
             provider=runtime_config.ocr_provider,
-            model=runtime_config.ocr_model,
+            model=_active_ocr_model(runtime_config),
         ) as event:
             result = extract_raw_text(source_image, runtime_config)
             event["provider"] = result["provider"]
@@ -508,7 +516,7 @@ class ProcessingSupervisorAgent:
                 stage="image_validation",
                 runtime_config=runtime_config,
                 provider=runtime_config.ocr_provider,
-                model=runtime_config.ocr_model,
+                model=_active_ocr_model(runtime_config),
             ):
                 validate_source_image(source_image)
 
@@ -518,7 +526,7 @@ class ProcessingSupervisorAgent:
                 stage="ocr",
                 runtime_config=runtime_config,
                 provider=runtime_config.ocr_provider,
-                model=runtime_config.ocr_model,
+                model=_active_ocr_model(runtime_config),
             ) as event:
                 result = extract_raw_text(source_image, runtime_config)
                 event["provider"] = result["provider"]

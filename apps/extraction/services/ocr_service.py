@@ -219,7 +219,7 @@ def _run_vision(source_image, runtime_config):
         with open(processed_path, "rb") as processed_file:
             text = provider.extract_text(
                 processed_file,
-                model_name=runtime_config.ocr_model,
+                model_name=runtime_config.vision_model,
                 timeout_seconds=_vision_timeout_seconds(runtime_config),
             )
     finally:
@@ -227,7 +227,7 @@ def _run_vision(source_image, runtime_config):
 
     payload = _payload(
         provider_name,
-        runtime_config.ocr_model,
+        runtime_config.vision_model,
         resolved_mode,
         text,
     )
@@ -239,7 +239,7 @@ def _run_vision(source_image, runtime_config):
     return {
         "text": text,
         "provider": provider_name,
-        "model": runtime_config.ocr_model,
+        "model": runtime_config.vision_model,
         "mode": resolved_mode,
         "payload": payload,
     }
@@ -369,7 +369,7 @@ def extract_raw_text(source_image, runtime_config):
         result, attempt = _attempt_result(
             engine="vision",
             provider=normalize_ocr_provider(runtime_config.ocr_provider),
-            model=runtime_config.ocr_model,
+            model=runtime_config.vision_model,
             runner=lambda: _run_vision(source_image, runtime_config),
         )
         attempts.append(attempt)
@@ -389,7 +389,7 @@ def extract_raw_text(source_image, runtime_config):
         vision_result, vision_attempt = _attempt_result(
             engine="vision",
             provider=normalize_ocr_provider(runtime_config.ocr_provider),
-            model=runtime_config.ocr_model,
+            model=runtime_config.vision_model,
             runner=lambda: _run_vision(source_image, runtime_config),
         )
         attempts.append(vision_attempt)

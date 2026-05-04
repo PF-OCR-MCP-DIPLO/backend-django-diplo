@@ -5,6 +5,7 @@ y registra trazabilidad para el pipeline posterior.
 """
 
 import zipfile
+import logging
 from hashlib import sha256
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 
 from apps.documents.services.docx_image_extractor import (
+    DocxTooManyImagesError,
+    DocxUnsupportedContentError,
     extract_images_in_order,
     extract_text_from_docx,
 )
@@ -22,6 +25,8 @@ from apps.processing.services.settings_service import (
     as_snapshot_dict,
     get_runtime_config,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_process_run_from_upload(uploaded_file):
@@ -65,6 +70,10 @@ def create_process_run_from_upload(uploaded_file):
                 ) as event:
                     extracted_images = extract_images_in_order(process_run.source_docx)
                     event["images_extracted"] = len(extracted_images)
+                    event["duplicate_image_references_skipped"] = sum(
+                        len(extracted.skipped_duplicate_sources or [])
+                        for extracted in extracted_images
+                    )
                     event["total_image_bytes"] = sum(
                         len(extracted.binary) for extracted in extracted_images
                     )
@@ -73,10 +82,49 @@ def create_process_run_from_upload(uploaded_file):
                     event["docx_text_chars"] = len(extracted_text or "")
                 process_run.extracted_text = extracted_text
                 process_run.save(update_fields=["extracted_text", "updated_at"])
-            except (zipfile.BadZipFile, KeyError, ValueError) as error:
+            except zipfile.BadZipFile as error:
                 raise UploadValidationError(
                     code="invalid_docx",
                     message="El archivo .docx no es valido o esta corrupto.",
+                    details={"reason": str(error)},
+                ) from error
+            except KeyError as error:
+                raise UploadValidationError(
+                    code="docx_unsupported_content",
+                    message=(
+                        "El archivo .docx es valido, pero no contiene la estructura "
+                        "principal de Word que este extractor soporta."
+                    ),
+                    details={"reason": str(error)},
+                ) from error
+            except DocxTooManyImagesError as error:
+                raise UploadValidationError(
+                    code="docx_too_many_images",
+                    message=(
+                        "El archivo .docx es valido, pero contiene mas imagenes "
+                        "procesables que el limite configurado."
+                    ),
+                    details={
+                        "reason": str(error),
+                        "max_images": int(getattr(settings, "DOCX_MAX_IMAGES", 50)),
+                    },
+                ) from error
+            except DocxUnsupportedContentError as error:
+                raise UploadValidationError(
+                    code="docx_unsupported_content",
+                    message=(
+                        "El archivo .docx es valido, pero contiene elementos que "
+                        "no se pueden procesar con la configuracion actual."
+                    ),
+                    details={"reason": str(error)},
+                ) from error
+            except ValueError as error:
+                raise UploadValidationError(
+                    code="docx_conversion_error",
+                    message=(
+                        "El archivo .docx es valido, pero fallo la extraccion de "
+                        "contenido para procesamiento."
+                    ),
                     details={"reason": str(error)},
                 ) from error
             finally:
@@ -94,7 +142,8 @@ def create_process_run_from_upload(uploaded_file):
                     process_run=process_run,
                     sequence_index=extracted.sequence_index,
                     source_name=extracted.source_name,
-                    content_hash=sha256(extracted.binary).hexdigest(),
+                    content_hash=extracted.content_hash
+                    or sha256(extracted.binary).hexdigest(),
                     ocr_status=SourceImage.OCRStatus.PENDING,
                 )
                 source_image.image_file.save(
@@ -105,6 +154,8 @@ def create_process_run_from_upload(uploaded_file):
                     "image_bytes": len(extracted.binary),
                     "content_hash": source_image.content_hash,
                     "source_name": source_image.source_name,
+                    "relationship_id": extracted.relationship_id,
+                    "package_target": extracted.package_target,
                 }
                 from apps.processing.services.diagnostics import record_processing_event
 
@@ -117,6 +168,31 @@ def create_process_run_from_upload(uploaded_file):
                     image_bytes=len(extracted.binary),
                     raw_payload=stage_payload,
                 )
+                for skipped in extracted.skipped_duplicate_sources or []:
+                    logger.info(
+                        "Skipping duplicate DOCX image reference for job %s: %s duplicates %s by %s",
+                        process_run.pk,
+                        skipped.get("source_name"),
+                        source_image.source_name,
+                        skipped.get("reason"),
+                    )
+                    record_processing_event(
+                        process_run=process_run,
+                        source_image=source_image,
+                        stage="source_image_duplicate_skipped",
+                        status="completed",
+                        runtime_config=runtime_config,
+                        raw_payload={
+                            **skipped,
+                            "kept_source_name": source_image.source_name,
+                            "kept_source_image_id": source_image.pk,
+                        },
+                        notes=(
+                            f"Skipped duplicate image reference {skipped.get('source_name')} "
+                            f"because it matched {source_image.source_name} by "
+                            f"{skipped.get('reason')}."
+                        ),
+                    )
             process_run.total_images = len(extracted_images)
             process_run.save(update_fields=["total_images", "updated_at"])
         return process_run

@@ -37,7 +37,8 @@ def _runtime_config(ocr_mode="vision"):
     return RuntimeProcessingConfig(
         ocr_mode=ocr_mode,
         ocr_provider="ollama",
-        ocr_model="gemma4:e2b" if ocr_mode != "tesseract" else "spa",
+        ocr_model="spa",
+        vision_model="gemma4:e2b",
         llm_provider="ollama",
         llm_model="gemma3:1b-it-qat",
         assistant_provider="ollama",

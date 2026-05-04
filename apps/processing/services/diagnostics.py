@@ -515,10 +515,10 @@ def summarize_provider_health() -> dict[str, Any]:
     warnings: list[str] = []
     if (
         runtime_config.ocr_mode in {"vision", "auto"}
-        and runtime_config.ocr_model not in installed
+        and runtime_config.vision_model not in installed
     ):
         warnings.append(
-            f"OCR model '{runtime_config.ocr_model}' is not installed in Ollama."
+            f"Vision model '{runtime_config.vision_model}' is not installed in Ollama."
         )
     if (
         runtime_config.llm_provider == "ollama"
@@ -529,6 +529,7 @@ def summarize_provider_health() -> dict[str, Any]:
         )
     for label, model_name in (
         ("ocr", runtime_config.ocr_model),
+        ("vision", runtime_config.vision_model),
         ("llm", runtime_config.llm_model),
     ):
         size = model_sizes.get(model_name)
@@ -552,8 +553,11 @@ def summarize_provider_health() -> dict[str, Any]:
         },
         "checks": {
             "ocr_model_exists": (
+                runtime_config.ocr_mode != "tesseract" or runtime_config.ocr_model
+            ),
+            "vision_model_exists": (
                 runtime_config.ocr_mode == "tesseract"
-                or runtime_config.ocr_model in installed
+                or runtime_config.vision_model in installed
             ),
             "llm_model_exists": runtime_config.llm_model in installed,
             "timeout_seconds": runtime_config.request_timeout_seconds,

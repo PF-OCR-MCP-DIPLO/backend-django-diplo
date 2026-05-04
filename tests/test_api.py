@@ -429,7 +429,8 @@ class DocumentApiTests(TestCase):
             {
                 "ocr_mode": "auto",
                 "ocr_provider": "ollama",
-                "ocr_model": "gemma4:e2b",
+                "ocr_model": "spa",
+                "vision_model": "gemma4:e2b",
                 "llm_provider": "ollama",
                 "llm_model": "gemma3:1b-it-qat",
                 "request_timeout_seconds": 120,
@@ -468,6 +469,7 @@ class DocumentApiTests(TestCase):
             self.assertIn(provider, payload["provider_models"])
             self.assertIn(provider, payload["provider_requirements"])
             self.assertIsInstance(payload["provider_models"][provider]["ocr"], list)
+            self.assertIsInstance(payload["provider_models"][provider]["vision"], list)
             self.assertIsInstance(payload["provider_models"][provider]["llm"], list)
             self.assertIn("operational", payload["provider_requirements"][provider])
             self.assertIn(
@@ -542,7 +544,7 @@ class DocumentApiTests(TestCase):
             {
                 "ocr_mode": "vision",
                 "ocr_provider": "ollama",
-                "ocr_model": "",
+                "vision_model": "",
                 "llm_provider": "ollama",
                 "llm_model": "",
                 "request_timeout_seconds": 1,
@@ -553,7 +555,7 @@ class DocumentApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["error"]["code"], "validation_error")
         details = payload["error"]["details"]
-        self.assertIn("ocr_model", details)
+        self.assertIn("vision_model", details)
         self.assertIn("llm_model", details)
         self.assertIn("request_timeout_seconds", details)
 
@@ -673,6 +675,16 @@ class DocumentApiTests(TestCase):
 
     @override_settings(API_KEY="dev")
     def test_bulk_deposit_corrections_persist_and_refresh_detail(self):
+        settings_obj = get_or_create_processing_settings()
+        settings_obj.valid_consignation_month = 4
+        settings_obj.valid_consignation_year = 2026
+        settings_obj.save(
+            update_fields=[
+                "valid_consignation_month",
+                "valid_consignation_year",
+                "updated_at",
+            ]
+        )
         upload = SimpleUploadedFile(
             "consignaciones.docx",
             self.docx_bytes,

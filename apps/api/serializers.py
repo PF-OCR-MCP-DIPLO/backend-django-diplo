@@ -186,6 +186,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "ocr_mode",
             "ocr_provider",
             "ocr_model",
+            "vision_model",
             "llm_provider",
             "llm_model",
             "assistant_provider",
@@ -246,6 +247,7 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "assistant_api_key", getattr(instance, "assistant_api_key", "")
         )
         ocr_model = attrs.get("ocr_model", getattr(instance, "ocr_model", ""))
+        vision_model = attrs.get("vision_model", getattr(instance, "vision_model", ""))
         llm_model = attrs.get("llm_model", getattr(instance, "llm_model", ""))
         assistant_model = attrs.get(
             "assistant_model", getattr(instance, "assistant_model", "")
@@ -288,8 +290,10 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             errors["ocr_provider"] = [
                 f"OCR provider '{ocr_provider}' is not operational in this MVP."
             ]
-        if ocr_mode in ("vision", "auto") and not ocr_model:
-            errors["ocr_model"] = ["OCR model is required for vision/auto mode."]
+        if ocr_mode == "auto" and not ocr_model:
+            errors["ocr_model"] = ["OCR model is required for auto mode."]
+        if ocr_mode in ("vision", "auto") and not vision_model:
+            errors["vision_model"] = ["Vision model is required for vision/auto mode."]
 
         if llm_provider != "ollama":
             if not llm_api_key:
@@ -322,6 +326,10 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             )
             if not effective_ocr_model or ":" in effective_ocr_model:
                 attrs["ocr_model"] = "spa"
+        if ocr_mode == "auto" and ":" in str(ocr_model):
+            errors["ocr_model"] = [
+                "OCR model must be a local OCR language in auto mode, not a vision model."
+            ]
         if errors:
             raise serializers.ValidationError(errors)
         attrs["extraction_criteria"] = normalize_extraction_criteria(

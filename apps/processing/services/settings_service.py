@@ -40,6 +40,7 @@ class RuntimeProcessingConfig:
     ocr_mode: str
     ocr_provider: str
     ocr_model: str
+    vision_model: str
     llm_provider: str
     llm_model: str
     assistant_provider: str
@@ -62,7 +63,12 @@ def get_or_create_processing_settings():
     defaults = {
         "ocr_mode": ProcessingSettings.OCRMode.VISION,
         "ocr_provider": ProcessingSettings.Provider.OLLAMA,
-        "ocr_model": getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b"),
+        "ocr_model": getattr(settings, "OCR_MODEL", "spa"),
+        "vision_model": getattr(
+            settings,
+            "VISION_MODEL",
+            getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b"),
+        ),
         "llm_provider": ProcessingSettings.Provider.OLLAMA,
         "llm_model": getattr(settings, "LLM_MODEL", settings.OLLAMA_MODEL),
         "assistant_provider": ProcessingSettings.Provider.OLLAMA,
@@ -93,29 +99,30 @@ def get_runtime_config():
     )
     resolved_ocr_provider = normalize_ocr_provider(resolved_ocr_provider)
 
-    # Preferimos el modelo vision si el modo es vision/auto y el valor guardado
-    # todavía apunta al lenguaje de Tesseract.
     resolved_ocr_model = (
         config.ocr_model or getattr(settings, "OCR_MODEL", "")
     ).strip()
-    if resolved_ocr_mode in (
+    resolved_vision_model = (
+        config.vision_model
+        or getattr(
+            settings,
+            "VISION_MODEL",
+            getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b"),
+        )
+    ).strip()
+    if not resolved_ocr_model or ":" in resolved_ocr_model:
+        resolved_ocr_model = getattr(settings, "OCR_MODEL", "spa")
+    if not resolved_vision_model and resolved_ocr_mode in (
         ProcessingSettings.OCRMode.VISION,
         ProcessingSettings.OCRMode.AUTO,
     ):
-        if (
-            not resolved_ocr_model
-            or ":" not in resolved_ocr_model
-            or resolved_ocr_model.lower() == "spa"
-        ):
-            resolved_ocr_model = getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b")
-    elif resolved_ocr_mode == ProcessingSettings.OCRMode.TESSERACT:
-        if not resolved_ocr_model:
-            resolved_ocr_model = getattr(settings, "OCR_MODEL", "spa")
+        resolved_vision_model = getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b")
 
     return RuntimeProcessingConfig(
         ocr_mode=resolved_ocr_mode,
         ocr_provider=resolved_ocr_provider,
         ocr_model=resolved_ocr_model,
+        vision_model=resolved_vision_model,
         llm_provider=config.llm_provider,
         llm_model=config.llm_model,
         assistant_provider=config.assistant_provider,
@@ -141,7 +148,9 @@ def as_snapshot_dict(runtime_config):
         "effective_ocr_engine": runtime_config.ocr_mode,
         "effective_ocr_provider": runtime_config.ocr_provider,
         "effective_ocr_model": runtime_config.ocr_model,
+        "effective_vision_model": runtime_config.vision_model,
         "ocr_model": runtime_config.ocr_model,
+        "vision_model": runtime_config.vision_model,
         "llm_provider": runtime_config.llm_provider,
         "llm_model": runtime_config.llm_model,
         "assistant_provider": runtime_config.assistant_provider,
@@ -171,16 +180,27 @@ def available_options():
         settings.OLLAMA_MODEL,
         "qwen2.5:3b",
     ]
-    fallback_ocr_models = [settings.OLLAMA_VISION_MODEL, "gemma4:e2b", "moondream"]
+    fallback_ocr_models = [
+        getattr(settings, "OCR_MODEL", "spa"),
+        "spa",
+        "eng",
+        "spa+eng",
+    ]
+    fallback_vision_models = [
+        getattr(settings, "VISION_MODEL", settings.OLLAMA_VISION_MODEL),
+        "gemma4:e2b",
+        "moondream",
+    ]
     provider_models = {
         "ollama": {
-            "ocr": ollama_models or fallback_ocr_models,
+            "ocr": fallback_ocr_models,
+            "vision": ollama_models or fallback_vision_models,
             "llm": ollama_models or fallback_llm_models,
         },
-        "openai": {"ocr": [], "llm": []},
-        "gemini": {"ocr": [], "llm": []},
-        "deepseek": {"ocr": [], "llm": []},
-        "anthropic": {"ocr": [], "llm": []},
+        "openai": {"ocr": [], "vision": [], "llm": []},
+        "gemini": {"ocr": [], "vision": [], "llm": []},
+        "deepseek": {"ocr": [], "vision": [], "llm": []},
+        "anthropic": {"ocr": [], "vision": [], "llm": []},
     }
     provider_requirements = {
         provider: {

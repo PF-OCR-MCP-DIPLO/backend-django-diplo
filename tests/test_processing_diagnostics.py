@@ -101,7 +101,7 @@ class ProcessingDiagnosticsTests(TestCase):
     def test_provider_health_detects_missing_installed_model(self):
         settings_obj = get_or_create_processing_settings()
         settings_obj.ocr_mode = ProcessingSettings.OCRMode.VISION
-        settings_obj.ocr_model = "missing-vision"
+        settings_obj.vision_model = "missing-vision"
         settings_obj.llm_model = "missing-llm"
         settings_obj.save()
 
@@ -115,7 +115,7 @@ class ProcessingDiagnosticsTests(TestCase):
         ):
             health = summarize_provider_health()
 
-        self.assertFalse(health["checks"]["ocr_model_exists"])
+        self.assertFalse(health["checks"]["vision_model_exists"])
         self.assertFalse(health["checks"]["llm_model_exists"])
         self.assertGreaterEqual(len(health["warnings"]), 2)
 

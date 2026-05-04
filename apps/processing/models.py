@@ -138,6 +138,7 @@ class ProcessingSettings(models.Model):
         max_length=32, choices=Provider.choices, default=Provider.OLLAMA
     )
     ocr_model = models.CharField(max_length=128, blank=True)
+    vision_model = models.CharField(max_length=128, blank=True)
     llm_provider = models.CharField(
         max_length=32, choices=Provider.choices, default=Provider.OLLAMA
     )
@@ -174,6 +175,15 @@ class ProcessingSettings(models.Model):
     def effective_ocr_model(self):
         """Devuelve ocr_model o default desde settings."""
         return self.ocr_model or getattr(settings, "OCR_MODEL", "spa")
+
+    @property
+    def effective_vision_model(self):
+        """Devuelve vision_model o default desde settings."""
+        return self.vision_model or getattr(
+            settings,
+            "VISION_MODEL",
+            getattr(settings, "OLLAMA_VISION_MODEL", "gemma4:e2b"),
+        )
 
     @property
     def effective_llm_model(self):

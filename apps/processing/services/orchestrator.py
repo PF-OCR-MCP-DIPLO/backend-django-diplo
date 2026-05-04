@@ -24,6 +24,14 @@ from apps.processing.services.settings_service import (
 DOCUMENT_TEXT_SOURCE_NAME = "document_text"
 
 
+def _active_ocr_model(runtime_config):
+    if runtime_config.ocr_mode == "vision":
+        return runtime_config.vision_model
+    if runtime_config.ocr_mode == "auto":
+        return f"{runtime_config.ocr_model}|vision:{runtime_config.vision_model}"
+    return runtime_config.ocr_model
+
+
 def is_generated_text_source(source_image):
     """Indica si la fila representa texto extraído del documento y no una imagen real."""
     return (
@@ -86,13 +94,15 @@ def _sync_job_counters(process_run):
 def prepare_job_for_full_processing(process_run):
     """Reinicia una corrida para reprocesarla de forma completa."""
     runtime_config = get_runtime_config()
-    process_run = ProcessRun.objects.get(pk=process_run.pk)
     with stage_timer(
         process_run=process_run,
         stage="job_prepare",
         runtime_config=runtime_config,
     ) as event:
         with transaction.atomic():
+            process_run = ProcessRun.objects.select_for_update().get(pk=process_run.pk)
+            if process_run.status == ProcessRun.Status.PROCESSING:
+                raise RuntimeError("job_already_processing")
             generated_text_images = process_run.source_images.filter(
                 sequence_index=0, source_name=DOCUMENT_TEXT_SOURCE_NAME
             )
@@ -249,7 +259,7 @@ def process_prepared_job(process_run, runtime_config):
                     "image_failed",
                     runtime_config,
                     provider=source_image.ocr_provider,
-                    model=runtime_config.ocr_model,
+                    model=_active_ocr_model(runtime_config),
                     raw_payload={
                         "job_id": process_run.pk,
                         "source_image_id": source_image.pk,

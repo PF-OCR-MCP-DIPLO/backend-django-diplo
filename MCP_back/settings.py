@@ -229,7 +229,7 @@ if not DEBUG and ALLOW_OPEN_API_FOR_DEV:
 DOCX_MAX_UPLOAD_BYTES = int(
     os.environ.get("DOCX_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))
 )
-DOCX_MAX_IMAGES = int(os.environ.get("DOCX_MAX_IMAGES", "50"))
+DOCX_MAX_IMAGES = int(os.environ.get("DOCX_MAX_IMAGES", "100"))
 EXTRACTED_IMAGE_MAX_BYTES = int(
     os.environ.get("EXTRACTED_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
 )
@@ -292,6 +292,9 @@ OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "240"))
 LLM_MODEL = os.environ.get("LLM_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"))
 OCR_MODE = os.environ.get("OCR_MODE", "vision")
 OCR_MODEL = os.environ.get("OCR_MODEL", "spa")
+VISION_MODEL = os.environ.get(
+    "VISION_MODEL", os.environ.get("OLLAMA_VISION_MODEL", "gemma4:e2b")
+)
 ASSISTANT_MODEL = os.environ.get(
     "ASSISTANT_MODEL", os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 )

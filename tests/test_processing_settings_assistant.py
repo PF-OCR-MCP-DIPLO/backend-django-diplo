@@ -73,6 +73,7 @@ class ProcessingSettingsAssistantTests(TestCase):
         settings_obj.assistant_provider = "ollama"
         settings_obj.assistant_model = "assistant-test"
         settings_obj.llm_model = "llm-test"
+        settings_obj.vision_model = "vision-test"
         settings_obj.valid_consignation_month = 4
         settings_obj.valid_consignation_year = 2026
         settings_obj.save()
@@ -82,6 +83,7 @@ class ProcessingSettingsAssistantTests(TestCase):
         runtime = get_runtime_config()
         self.assertEqual(runtime.assistant_model, "assistant-test")
         self.assertEqual(runtime.llm_model, "llm-test")
+        self.assertEqual(runtime.vision_model, "vision-test")
         self.assertEqual(runtime.valid_consignation_month, 4)
         self.assertEqual(runtime.valid_consignation_year, 2026)
         self.assertIn("fields", runtime.extraction_criteria)
@@ -106,6 +108,42 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         updated = serializer.save()
         self.assertEqual(updated.ocr_provider, "ollama")
+
+    def test_serializer_keeps_auto_ocr_and_vision_models_separate(self):
+        settings_obj = get_or_create_processing_settings()
+        serializer = ProcessingSettingsSerializer(
+            settings_obj,
+            data={
+                "ocr_mode": "auto",
+                "ocr_provider": "ollama",
+                "ocr_model": "spa",
+                "vision_model": "gemma4:e2b",
+                "llm_provider": "ollama",
+                "llm_model": "gemma3",
+            },
+            partial=True,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        updated = serializer.save()
+        self.assertEqual(updated.ocr_model, "spa")
+        self.assertEqual(updated.vision_model, "gemma4:e2b")
+
+    def test_serializer_rejects_auto_when_ocr_model_is_vision_model(self):
+        settings_obj = get_or_create_processing_settings()
+        serializer = ProcessingSettingsSerializer(
+            settings_obj,
+            data={
+                "ocr_mode": "auto",
+                "ocr_model": "gemma4:e2b",
+                "vision_model": "gemma4:e2b",
+                "llm_model": "gemma3",
+            },
+            partial=True,
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("ocr_model", serializer.errors)
 
     def test_available_options_expose_low_ram_assistant_recommendation(self):
         from apps.processing.services.settings_service import available_options

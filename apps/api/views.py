@@ -195,7 +195,16 @@ class JobProcessView(APIView):
             )
             return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
-        processed = process_job(job)
+        try:
+            processed = process_job(job)
+        except RuntimeError as error:
+            if str(error) == "job_already_processing":
+                return api_error_response(
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="job_already_processing",
+                    message="Esta ejecucion ya se encuentra en procesamiento.",
+                )
+            raise
         processed = ProcessRun.objects.prefetch_related("source_images__deposits").get(
             pk=processed.pk
         )
