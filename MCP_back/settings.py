@@ -229,7 +229,15 @@ if not DEBUG and ALLOW_OPEN_API_FOR_DEV:
 DOCX_MAX_UPLOAD_BYTES = int(
     os.environ.get("DOCX_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))
 )
-DOCX_MAX_IMAGES = int(os.environ.get("DOCX_MAX_IMAGES", "100"))
+DOCX_MAX_IMAGES_WARNING_THRESHOLD = int(
+    os.environ.get(
+        "DOCX_MAX_IMAGES_WARNING_THRESHOLD",
+        os.environ.get("DOCX_MAX_IMAGES", "50"),
+    )
+)
+DOCX_BLOCK_DOCUMENTS_OVER_IMAGE_LIMIT = os.environ.get(
+    "DOCX_BLOCK_DOCUMENTS_OVER_IMAGE_LIMIT", "false"
+).lower() in {"1", "true", "yes"}
 EXTRACTED_IMAGE_MAX_BYTES = int(
     os.environ.get("EXTRACTED_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
 )

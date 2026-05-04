@@ -1,15 +1,23 @@
+from copy import deepcopy
+from dataclasses import replace
+
+from django.db import IntegrityError
+
 from apps.extraction.services.image_validation import validate_source_image
 from apps.extraction.services.ocr_service import extract_raw_text, score_ocr_text
 from apps.extraction.services.structuring_service import extract_structured_data
 from apps.extraction.services.validators import build_record_observations
 from apps.processing.models import ExtractedDeposit, SourceImage
-from apps.processing.services.diagnostics import stage_timer, truncate_debug_text
-from apps.processing.services.cleaning_agent import CleaningAgent
-from apps.processing.services.validation_agent import ValidationAgent
-from apps.processing.services.retry_agent import RetryAgent, RetryStrategy
 from apps.processing.services.aggregation_agent import AggregationAgent
-from copy import deepcopy
-from dataclasses import replace
+from apps.processing.services.cleaning_agent import CleaningAgent
+from apps.processing.services.diagnostics import stage_timer, truncate_debug_text
+from apps.processing.services.record_deduplication import (
+    canonicalize_record,
+    deduplicate_structured_records,
+    normalize_amount,
+)
+from apps.processing.services.retry_agent import RetryAgent, RetryStrategy
+from apps.processing.services.validation_agent import ValidationAgent
 
 SIGNIFICANT_OCR_MIN_CHARS = 20
 
@@ -37,6 +45,8 @@ def _record_skip_reason(record):
         missing.append("valor")
     if missing:
         return f"missing_required_fields:{','.join(missing)}"
+    if normalize_amount(record.get("valor")) is None:
+        return "invalid_amount"
     return ""
 
 
@@ -119,9 +129,22 @@ class ValidationPersistenceAgent:
                 "Text sources must not be passed as image sources."
             )
 
+        deduplicated_records = deduplicate_structured_records(
+            records=records,
+            source_image=source_image,
+            process_run=process_run,
+            runtime_config=runtime_config,
+            log_callback=log_callback,
+        )
+        existing_canonical_keys = set(
+            process_run.deposits.filter(source_image=source_image)
+            .filter(canonical_key__isnull=False)
+            .exclude(canonical_key="")
+            .values_list("canonical_key", flat=True)
+        )
         created_records = 0
         skipped_records = 0
-        for index, structured_record in enumerate(records, start=1):
+        for index, structured_record in enumerate(deduplicated_records, start=1):
             skip_reason = _record_skip_reason(structured_record)
             if skip_reason:
                 skipped_records += 1
@@ -137,13 +160,31 @@ class ValidationPersistenceAgent:
                             "record_index": index,
                             "reason": skip_reason,
                             "record_payload": structured_record,
-                            "structured_records_count": len(records),
+                            "structured_records_count": len(deduplicated_records),
                             "persisted_records_count": created_records,
                         },
                     )
                 continue
             referencia = structured_record.get("referencia")
-            valor = structured_record.get("valor")
+            valor = normalize_amount(structured_record.get("valor"))
+            canonical = canonicalize_record(source_image, structured_record)
+            canonical_key = structured_record.get("_canonical_key") or canonical.key
+            if canonical_key and canonical_key in existing_canonical_keys:
+                skipped_records += 1
+                if log_callback:
+                    log_callback(
+                        process_run,
+                        source_image,
+                        "result_duplicate_skipped",
+                        runtime_config,
+                        notes="Skipped duplicate result already persisted for this source image.",
+                        raw_payload={
+                            "record_index": index,
+                            "canonical_key": canonical_key,
+                            "reason": "existing_persisted_canonical_key",
+                        },
+                    )
+                continue
 
             observations, is_current_month = build_record_observations(
                 structured_record.get("fecha_consignacion"),
@@ -156,35 +197,64 @@ class ValidationPersistenceAgent:
             if fallback_observation:
                 observations.append(fallback_observation)
 
-            ExtractedDeposit.objects.create(
-                process_run=process_run,
-                source_image=source_image,
-                sequence_index=source_image.sequence_index,
-                fecha_consignacion=structured_record.get("fecha_consignacion") or "",
-                hora_consignacion=structured_record.get("hora_consignacion") or "",
-                referencia=referencia,
-                valor=valor,
-                # Legacy name kept for API/UI compatibility: true means the
-                # deposit belongs to the configured valid period.
-                is_current_month=is_current_month,
-                observations=observations,
-                structured_payload=structured_record,
-            )
+            structured_payload = dict(structured_record)
+            if canonical_key:
+                structured_payload["_canonical_key"] = canonical_key
+            try:
+                ExtractedDeposit.objects.create(
+                    process_run=process_run,
+                    source_image=source_image,
+                    sequence_index=source_image.sequence_index,
+                    fecha_consignacion=structured_record.get("fecha_consignacion")
+                    or "",
+                    hora_consignacion=structured_record.get("hora_consignacion") or "",
+                    referencia=referencia,
+                    valor=valor,
+                    # Legacy name kept for API/UI compatibility: true means the
+                    # deposit belongs to the configured valid period.
+                    is_current_month=is_current_month,
+                    observations=observations,
+                    structured_payload=structured_payload,
+                    canonical_key=canonical_key or None,
+                )
+            except IntegrityError:
+                skipped_records += 1
+                if log_callback:
+                    log_callback(
+                        process_run,
+                        source_image,
+                        "result_duplicate_skipped",
+                        runtime_config,
+                        notes="Skipped duplicate result rejected by canonical DB constraint.",
+                        raw_payload={
+                            "record_index": index,
+                            "canonical_key": canonical_key,
+                            "reason": "canonical_unique_constraint",
+                        },
+                    )
+                continue
+            if canonical_key:
+                existing_canonical_keys.add(canonical_key)
             created_records += 1
-        if log_callback and records and created_records != len(records):
+        if (
+            log_callback
+            and deduplicated_records
+            and created_records != len(deduplicated_records)
+        ):
             log_callback(
                 process_run,
                 source_image,
                 "persistence_summary",
                 runtime_config,
                 notes=(
-                    f"Persisted {created_records}/{len(records)} structured records; "
+                    f"Persisted {created_records}/{len(deduplicated_records)} structured records; "
                     f"skipped {skipped_records}."
                 ),
                 raw_payload={
-                    "structured_records_count": len(records),
+                    "structured_records_count": len(deduplicated_records),
                     "persisted_records_count": created_records,
                     "skipped_records_count": skipped_records,
+                    "input_records_count": len(records or []),
                 },
                 is_error=created_records == 0,
             )

@@ -10,7 +10,12 @@ from django.test import TestCase
 from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
-from apps.processing.models import ExtractionLog, ProcessRun, SourceImage
+from apps.processing.models import (
+    ExtractedDeposit,
+    ExtractionLog,
+    ProcessRun,
+    SourceImage,
+)
 from apps.processing.services.job_runner import _running_jobs, start_job_processing
 from apps.processing.services.settings_service import get_or_create_processing_settings
 
@@ -195,6 +200,39 @@ class DocumentApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["error"]["code"], "invalid_docx")
 
+    def test_duplicate_upload_reuses_existing_job_for_same_document_and_config(self):
+        first_upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        second_upload = SimpleUploadedFile(
+            "consignaciones.docx",
+            self.docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        first_response = self.client.post(
+            "/api/documents/upload/",
+            {"file": first_upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
+        )
+        second_response = self.client.post(
+            "/api/documents/upload/",
+            {"file": second_upload},
+            format="multipart",
+            HTTP_X_API_KEY="dev",
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(first_response.json()["id"], second_response.json()["id"])
+        self.assertEqual(ProcessRun.objects.count(), 1)
+        self.assertTrue(
+            ExtractionLog.objects.filter(stage="existing_job_reused").exists()
+        )
+
     def test_job_detail_not_found_uses_error_envelope(self):
         response = self.client.get("/api/jobs/999999/")
         self.assertEqual(response.status_code, 404)
@@ -279,6 +317,61 @@ class DocumentApiTests(TestCase):
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(len(list_response.json()), 1)
         self.assertEqual(ProcessRun.objects.get(pk=job_id).deposits.count(), 2)
+
+    def test_processing_deduplicates_final_records_from_same_image(self):
+        job_id = self._upload_job(filename="dedupe.docx")
+
+        duplicate_records = [
+            {
+                "fecha_consignacion": "15/04/2026",
+                "hora_consignacion": "",
+                "referencia": " ref001 ",
+                "valor": "$50.000,00",
+                "archivo_origen": "image1.png",
+            },
+            {
+                "fecha_consignacion": "15/04/2026",
+                "hora_consignacion": "09:30",
+                "referencia": "REF001",
+                "valor": "50000.00",
+                "archivo_origen": "image1.png",
+            },
+            {
+                "fecha_consignacion": "15/04/2026",
+                "hora_consignacion": "09:30",
+                "referencia": "REF001",
+                "valor": "50,000.00",
+                "archivo_origen": "image1.png",
+            },
+        ]
+
+        with (
+            patch(
+                "apps.extraction.providers.ocr.ollama_vision.OllamaVisionOCRProvider.extract_text",
+                side_effect=["Banco ref REF001 valor 50000 fecha 15/04/2026", ""],
+            ),
+            patch(
+                "apps.extraction.providers.llm.ollama_text.OllamaTextLLMProvider.extract",
+                side_effect=[duplicate_records, []],
+            ),
+        ):
+            response = self.client.post(
+                f"/api/jobs/{job_id}/process/", HTTP_X_API_KEY="dev"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        job = ProcessRun.objects.get(pk=job_id)
+        self.assertEqual(job.deposits.count(), 1)
+        deposit = ExtractedDeposit.objects.get(process_run=job)
+        self.assertEqual(deposit.referencia, "REF001")
+        self.assertEqual(deposit.hora_consignacion, "09:30")
+        self.assertTrue(deposit.canonical_key)
+        self.assertTrue(
+            ExtractionLog.objects.filter(
+                process_run=job,
+                stage__in=["result_duplicate_skipped", "result_candidate_merged"],
+            ).exists()
+        )
 
     def test_process_marks_invalid_images_failed_without_calling_ocr(self):
         invalid_docx = build_docx_with_images(
@@ -422,6 +515,8 @@ class DocumentApiTests(TestCase):
         self.assertEqual(payload["ocr_mode"], "vision")
         self.assertIn("valid_consignation_month", payload)
         self.assertIn("valid_consignation_year", payload)
+        self.assertIn("max_images_warning_threshold", payload)
+        self.assertIn("block_documents_over_image_limit", payload)
         self.assertFalse(payload["has_ocr_api_key"])
         self.assertFalse(payload["has_llm_api_key"])
         patch_response = self.client.patch(
@@ -434,6 +529,8 @@ class DocumentApiTests(TestCase):
                 "llm_provider": "ollama",
                 "llm_model": "gemma3:1b-it-qat",
                 "request_timeout_seconds": 120,
+                "max_images_warning_threshold": 37,
+                "block_documents_over_image_limit": False,
                 "valid_consignation_month": 4,
                 "valid_consignation_year": 2026,
             },
@@ -442,6 +539,8 @@ class DocumentApiTests(TestCase):
         self.assertEqual(patch_response.status_code, 200)
         self.assertEqual(patch_response.json()["valid_consignation_month"], 4)
         self.assertEqual(patch_response.json()["valid_consignation_year"], 2026)
+        self.assertEqual(patch_response.json()["max_images_warning_threshold"], 37)
+        self.assertFalse(patch_response.json()["block_documents_over_image_limit"])
         options_response = self.client.get("/api/processing/settings/options/")
         self.assertEqual(options_response.status_code, 200)
         self.assertIn("auto", options_response.json()["ocr_modes"])

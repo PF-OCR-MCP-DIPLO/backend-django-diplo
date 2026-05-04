@@ -1,9 +1,9 @@
 """Acceso, normalización y snapshot de configuración de procesamiento."""
 
 from dataclasses import dataclass
-from django.utils import timezone
 
 from django.conf import settings
+from django.utils import timezone
 
 from apps.processing.models import ProcessingSettings
 from apps.processing.services.extraction_criteria import (
@@ -52,6 +52,8 @@ class RuntimeProcessingConfig:
     ocr_api_key: str
     llm_api_key: str
     request_timeout_seconds: int
+    max_images_warning_threshold: int
+    block_documents_over_image_limit: bool
     valid_consignation_month: int
     valid_consignation_year: int
     extraction_criteria: dict
@@ -77,6 +79,12 @@ def get_or_create_processing_settings():
         ),
         "assistant_show_debug_details": False,
         "request_timeout_seconds": settings.OLLAMA_TIMEOUT,
+        "max_images_warning_threshold": getattr(
+            settings, "DOCX_MAX_IMAGES_WARNING_THRESHOLD", 50
+        ),
+        "block_documents_over_image_limit": getattr(
+            settings, "DOCX_BLOCK_DOCUMENTS_OVER_IMAGE_LIMIT", False
+        ),
         "valid_consignation_month": current_date.month,
         "valid_consignation_year": current_date.year,
         "extraction_criteria": default_extraction_criteria(),
@@ -134,6 +142,8 @@ def get_runtime_config():
         ocr_api_key=config.ocr_api_key,
         llm_api_key=config.llm_api_key,
         request_timeout_seconds=config.request_timeout_seconds,
+        max_images_warning_threshold=config.max_images_warning_threshold,
+        block_documents_over_image_limit=config.block_documents_over_image_limit,
         valid_consignation_month=config.valid_consignation_month,
         valid_consignation_year=config.valid_consignation_year,
         extraction_criteria=normalize_extraction_criteria(config.extraction_criteria),
@@ -162,6 +172,10 @@ def as_snapshot_dict(runtime_config):
         "assistant_temperature": runtime_config.assistant_temperature,
         "assistant_num_predict": runtime_config.assistant_num_predict,
         "request_timeout_seconds": runtime_config.request_timeout_seconds,
+        "max_images_warning_threshold": runtime_config.max_images_warning_threshold,
+        "block_documents_over_image_limit": (
+            runtime_config.block_documents_over_image_limit
+        ),
         "valid_consignation_month": runtime_config.valid_consignation_month,
         "valid_consignation_year": runtime_config.valid_consignation_year,
         "extraction_criteria": runtime_config.extraction_criteria,

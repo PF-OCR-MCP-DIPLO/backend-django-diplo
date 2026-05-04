@@ -110,6 +110,10 @@ def prepare_job_for_full_processing(process_run):
             process_run.deposits.all().delete()
             process_run.extraction_logs.exclude(stage__startswith="docx_").exclude(
                 stage="source_image_created"
+            ).exclude(stage="source_image_duplicate_skipped").exclude(
+                stage="existing_job_reused"
+            ).exclude(
+                stage="duplicate_http_request_ignored"
             ).delete()
             if process_run.excel_file:
                 process_run.excel_file.delete(save=False)

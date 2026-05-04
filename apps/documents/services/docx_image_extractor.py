@@ -34,10 +34,6 @@ class ExtractedImageFile:
     skipped_duplicate_sources: list[dict] | None = None
 
 
-class DocxTooManyImagesError(ValueError):
-    """El DOCX es válido, pero excede el límite operativo configurado."""
-
-
 class DocxUnsupportedContentError(ValueError):
     """El DOCX es válido, pero contiene elementos no soportados por el extractor."""
 
@@ -46,8 +42,7 @@ def extract_images_in_order(docx_file):
     """Recupera las imágenes embebidas del DOCX respetando su secuencia visual.
 
     Raises:
-        ValueError: Si el documento excede límites de imágenes o contiene
-            referencias no soportadas.
+        ValueError: Si el documento contiene referencias no soportadas.
     """
     docx_file.seek(0)
     if not zipfile.is_zipfile(docx_file):
@@ -68,9 +63,12 @@ def extract_images_in_order(docx_file):
         seen_targets = {}
         seen_recent_content = {}
         raw_reference_index = 0
-        max_images = int(getattr(settings, "DOCX_MAX_IMAGES", 50))
         max_image_bytes = int(
-            getattr(settings, "EXTRACTED_IMAGE_MAX_BYTES", 5 * 1024 * 1024)
+            getattr(
+                settings,
+                "EXTRACTED_IMAGE_MAX_BYTES",
+                5 * 1024 * 1024,
+            )
         )
         for element in document_root.iter():
             rel_id = _extract_relationship_id(element)
@@ -118,10 +116,6 @@ def extract_images_in_order(docx_file):
                 continue
 
             sequence_index = len(images) + 1
-            if sequence_index > max_images:
-                raise DocxTooManyImagesError(
-                    "DOCX contains more processable images than allowed."
-                )
             extracted = ExtractedImageFile(
                 sequence_index=sequence_index,
                 source_name=source_name,

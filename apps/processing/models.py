@@ -4,8 +4,8 @@ El esquema refleja el ciclo upload -> OCR/LLM -> corrección -> exportación y
 guarda trazabilidad suficiente para auditoría y reproceso parcial.
 """
 
-from django.db import models
 from django.conf import settings
+from django.db import models
 from django.utils import timezone
 
 
@@ -17,6 +17,16 @@ def default_valid_consignation_month():
 def default_valid_consignation_year():
     """Año inicial sugerido al crear settings; no es regla de negocio."""
     return timezone.localdate().year
+
+
+def default_max_images_warning_threshold():
+    """Umbral recomendado de imágenes antes de avisar al usuario."""
+    return getattr(settings, "DOCX_MAX_IMAGES_WARNING_THRESHOLD", 50)
+
+
+def default_block_documents_over_image_limit():
+    """Control explícito para convertir el umbral recomendado en bloqueo."""
+    return getattr(settings, "DOCX_BLOCK_DOCUMENTS_OVER_IMAGE_LIMIT", False)
 
 
 class ProcessRun(models.Model):
@@ -46,6 +56,8 @@ class ProcessRun(models.Model):
     )
     error_message = models.TextField(blank=True)
     provider_config_snapshot = models.JSONField(default=dict, blank=True)
+    source_docx_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    processing_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
     started_at = models.DateTimeField(blank=True, null=True)
     finished_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -105,10 +117,19 @@ class ExtractedDeposit(models.Model):
     is_current_month = models.BooleanField(blank=True, null=True)
     observations = models.JSONField(default=list, blank=True)
     structured_payload = models.JSONField(default=dict, blank=True)
+    canonical_key = models.CharField(
+        max_length=255, blank=True, null=True, db_index=True
+    )
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         ordering = ["sequence_index", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["process_run", "source_image", "canonical_key"],
+                name="uniq_deposit_canonical_per_source",
+            )
+        ]
 
 
 class ProcessingSettings(models.Model):
@@ -154,6 +175,12 @@ class ProcessingSettings(models.Model):
     assistant_num_predict = models.PositiveIntegerField(default=256)
     assistant_show_debug_details = models.BooleanField(default=False)
     request_timeout_seconds = models.PositiveIntegerField(default=320)
+    max_images_warning_threshold = models.PositiveIntegerField(
+        default=default_max_images_warning_threshold
+    )
+    block_documents_over_image_limit = models.BooleanField(
+        default=default_block_documents_over_image_limit
+    )
     valid_consignation_month = models.PositiveSmallIntegerField(
         default=default_valid_consignation_month
     )

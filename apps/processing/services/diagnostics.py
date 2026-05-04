@@ -357,6 +357,9 @@ def summarize_job_diagnostics(job: ProcessRun) -> dict[str, Any]:
         .filter(ocr_status=SourceImage.OCRStatus.FAILED)
         .count()
     )
+    image_limit_warnings = [
+        log for log in logs if log.stage == "docx_image_limit_warning"
+    ]
     total_ocr_duration = sum(_completed_duration(log) for log in ocr_logs)
     total_llm_duration = sum(_completed_duration(log) for log in llm_logs)
     last_log = logs[-1] if logs else None
@@ -423,6 +426,9 @@ def summarize_job_diagnostics(job: ProcessRun) -> dict[str, Any]:
         recommendations.append(
             "Some images failed; inspect image_failed and provider timeout events by source_image_id."
         )
+    for warning in image_limit_warnings:
+        if warning.notes:
+            recommendations.append(warning.notes)
 
     duration_ms = None
     if job.started_at and job.finished_at:
@@ -455,6 +461,7 @@ def summarize_job_diagnostics(job: ProcessRun) -> dict[str, Any]:
             or any(event.get("status") == "timeout" for event in events)
         ),
         "stale_processing": stale_processing,
+        "image_limit_warnings": len(image_limit_warnings),
         "last_event_at": last_log.created_at.isoformat() if last_log else None,
     }
     return {

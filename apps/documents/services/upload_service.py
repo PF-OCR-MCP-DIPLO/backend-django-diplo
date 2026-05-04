@@ -4,8 +4,9 @@ Transforma un archivo subido en una corrida persistida, extrae texto e imágenes
 y registra trazabilidad para el pipeline posterior.
 """
 
-import zipfile
+import json
 import logging
+import zipfile
 from hashlib import sha256
 from pathlib import Path
 
@@ -14,13 +15,12 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 
 from apps.documents.services.docx_image_extractor import (
-    DocxTooManyImagesError,
     DocxUnsupportedContentError,
     extract_images_in_order,
     extract_text_from_docx,
 )
 from apps.processing.models import ProcessRun, SourceImage
-from apps.processing.services.diagnostics import stage_timer
+from apps.processing.services.diagnostics import record_processing_event, stage_timer
 from apps.processing.services.settings_service import (
     as_snapshot_dict,
     get_runtime_config,
@@ -48,15 +48,58 @@ def create_process_run_from_upload(uploaded_file):
             contenido esperado.
     """
     _validate_uploaded_docx(uploaded_file)
+    runtime_config = get_runtime_config()
+    upload_bytes_hash = _hash_uploaded_file(uploaded_file)
+    provider_snapshot = as_snapshot_dict(runtime_config)
+    processing_fingerprint = _build_processing_fingerprint(
+        upload_bytes_hash, provider_snapshot
+    )
+    reused = _find_reusable_process_run(upload_bytes_hash, processing_fingerprint)
+    if reused is not None:
+        logger.info(
+            "Reusing existing process run %s for duplicate upload %s",
+            reused.pk,
+            uploaded_file.name,
+        )
+        record_processing_event(
+            process_run=reused,
+            stage="existing_job_reused",
+            status="completed",
+            runtime_config=runtime_config,
+            raw_payload={
+                "source_docx_hash": upload_bytes_hash,
+                "processing_fingerprint": processing_fingerprint,
+                "original_filename": uploaded_file.name,
+                "status": reused.status,
+            },
+            notes="Existing identical job reused; duplicate upload did not create a new run.",
+        )
+        if reused.status in {ProcessRun.Status.UPLOADED, ProcessRun.Status.PROCESSING}:
+            record_processing_event(
+                process_run=reused,
+                stage="duplicate_http_request_ignored",
+                status="completed",
+                runtime_config=runtime_config,
+                raw_payload={
+                    "source_docx_hash": upload_bytes_hash,
+                    "processing_fingerprint": processing_fingerprint,
+                    "status": reused.status,
+                },
+                notes="Duplicate upload request ignored; existing active job was returned.",
+            )
+        reused._was_reused = True
+        return reused
+
     process_run = None
     created_image_paths = []
-    runtime_config = get_runtime_config()
     try:
         with transaction.atomic():
             process_run = ProcessRun.objects.create(
                 original_filename=uploaded_file.name,
                 status=ProcessRun.Status.UPLOADED,
-                provider_config_snapshot=as_snapshot_dict(runtime_config),
+                provider_config_snapshot=provider_snapshot,
+                source_docx_hash=upload_bytes_hash,
+                processing_fingerprint=processing_fingerprint,
             )
             uploaded_file.seek(0)
             process_run.source_docx.save(uploaded_file.name, uploaded_file, save=True)
@@ -80,6 +123,11 @@ def create_process_run_from_upload(uploaded_file):
                     process_run.source_docx.seek(0)
                     extracted_text = extract_text_from_docx(process_run.source_docx)
                     event["docx_text_chars"] = len(extracted_text or "")
+                _handle_image_limit_policy(
+                    process_run,
+                    runtime_config,
+                    len(extracted_images),
+                )
                 process_run.extracted_text = extracted_text
                 process_run.save(update_fields=["extracted_text", "updated_at"])
             except zipfile.BadZipFile as error:
@@ -96,18 +144,6 @@ def create_process_run_from_upload(uploaded_file):
                         "principal de Word que este extractor soporta."
                     ),
                     details={"reason": str(error)},
-                ) from error
-            except DocxTooManyImagesError as error:
-                raise UploadValidationError(
-                    code="docx_too_many_images",
-                    message=(
-                        "El archivo .docx es valido, pero contiene mas imagenes "
-                        "procesables que el limite configurado."
-                    ),
-                    details={
-                        "reason": str(error),
-                        "max_images": int(getattr(settings, "DOCX_MAX_IMAGES", 50)),
-                    },
                 ) from error
             except DocxUnsupportedContentError as error:
                 raise UploadValidationError(
@@ -157,8 +193,6 @@ def create_process_run_from_upload(uploaded_file):
                     "relationship_id": extracted.relationship_id,
                     "package_target": extracted.package_target,
                 }
-                from apps.processing.services.diagnostics import record_processing_event
-
                 record_processing_event(
                     process_run=process_run,
                     source_image=source_image,
@@ -218,6 +252,104 @@ class UploadValidationError(Exception):
 def _build_image_filename(process_run_id, sequence_index, source_name):
     suffix = Path(source_name).suffix or ".bin"
     return f"process_runs/{process_run_id}/images/{sequence_index:04d}{suffix}"
+
+
+def _hash_uploaded_file(uploaded_file):
+    uploaded_file.seek(0)
+    digest = sha256()
+    for chunk in uploaded_file.chunks():
+        digest.update(chunk)
+    uploaded_file.seek(0)
+    return digest.hexdigest()
+
+
+def _build_processing_fingerprint(source_hash, provider_snapshot):
+    relevant_config = {
+        "source_docx_hash": source_hash,
+        "ocr_mode": provider_snapshot.get("ocr_mode"),
+        "ocr_provider": provider_snapshot.get("ocr_provider"),
+        "ocr_model": provider_snapshot.get("ocr_model"),
+        "vision_model": provider_snapshot.get("vision_model"),
+        "llm_provider": provider_snapshot.get("llm_provider"),
+        "llm_model": provider_snapshot.get("llm_model"),
+        "valid_consignation_month": provider_snapshot.get("valid_consignation_month"),
+        "valid_consignation_year": provider_snapshot.get("valid_consignation_year"),
+        "extraction_criteria": provider_snapshot.get("extraction_criteria"),
+        "max_images_warning_threshold": provider_snapshot.get(
+            "max_images_warning_threshold"
+        ),
+        "block_documents_over_image_limit": provider_snapshot.get(
+            "block_documents_over_image_limit"
+        ),
+    }
+    encoded = json.dumps(relevant_config, sort_keys=True, default=str).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _find_reusable_process_run(source_hash, processing_fingerprint):
+    reusable_statuses = [
+        ProcessRun.Status.UPLOADED,
+        ProcessRun.Status.PROCESSING,
+        ProcessRun.Status.COMPLETED,
+    ]
+    return (
+        ProcessRun.objects.filter(
+            source_docx_hash=source_hash,
+            processing_fingerprint=processing_fingerprint,
+            status__in=reusable_statuses,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def _handle_image_limit_policy(process_run, runtime_config, image_count):
+    threshold = int(runtime_config.max_images_warning_threshold or 0)
+    if threshold <= 0 or image_count <= threshold:
+        return
+    message = (
+        f"El documento contiene {image_count} imagenes, supera el limite "
+        f"recomendado de {threshold}. "
+    )
+    if runtime_config.block_documents_over_image_limit:
+        logger.warning("%sSe bloqueara el procesamiento por configuracion.", message)
+        record_processing_event(
+            process_run=process_run,
+            stage="docx_image_limit_blocked",
+            status="failed",
+            runtime_config=runtime_config,
+            raw_payload={
+                "images_extracted": image_count,
+                "max_images_warning_threshold": threshold,
+                "block_documents_over_image_limit": True,
+            },
+            notes=f"{message}Se bloqueo el procesamiento por configuracion.",
+        )
+        raise UploadValidationError(
+            code="docx_too_many_images",
+            message=(
+                "El archivo .docx es valido, pero supera el limite de imagenes "
+                "configurado para bloquear el procesamiento."
+            ),
+            details={
+                "images_extracted": image_count,
+                "max_images_warning_threshold": threshold,
+                "block_documents_over_image_limit": True,
+            },
+        )
+    logger.warning("%sSe continuara el procesamiento.", message)
+    record_processing_event(
+        process_run=process_run,
+        stage="docx_image_limit_warning",
+        status="completed",
+        runtime_config=runtime_config,
+        raw_payload={
+            "images_extracted": image_count,
+            "max_images_warning_threshold": threshold,
+            "block_documents_over_image_limit": False,
+        },
+        notes=f"{message}Se continuara el procesamiento.",
+    )
 
 
 def _validate_uploaded_docx(uploaded_file):

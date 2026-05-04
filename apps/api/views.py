@@ -92,9 +92,14 @@ class DocumentUploadView(APIView):
                 message=error.message,
                 details=error.details or None,
             )
+        response_status = (
+            status.HTTP_200_OK
+            if getattr(process_run, "_was_reused", False)
+            else status.HTTP_201_CREATED
+        )
         return Response(
             ProcessRunDetailSerializer(process_run, context={"request": request}).data,
-            status=status.HTTP_201_CREATED,
+            status=response_status,
         )
 
 

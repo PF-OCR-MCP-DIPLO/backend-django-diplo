@@ -179,6 +179,10 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
     valid_consignation_year = serializers.IntegerField(
         required=False, min_value=2000, max_value=2100
     )
+    max_images_warning_threshold = serializers.IntegerField(
+        required=False, min_value=1, max_value=1000
+    )
+    block_documents_over_image_limit = serializers.BooleanField(required=False)
 
     class Meta:
         model = ProcessingSettings
@@ -202,6 +206,8 @@ class ProcessingSettingsSerializer(serializers.ModelSerializer):
             "assistant_temperature",
             "assistant_num_predict",
             "request_timeout_seconds",
+            "max_images_warning_threshold",
+            "block_documents_over_image_limit",
             "valid_consignation_month",
             "valid_consignation_year",
             "updated_at",

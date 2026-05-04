@@ -74,6 +74,8 @@ class ProcessingSettingsAssistantTests(TestCase):
         settings_obj.assistant_model = "assistant-test"
         settings_obj.llm_model = "llm-test"
         settings_obj.vision_model = "vision-test"
+        settings_obj.max_images_warning_threshold = 42
+        settings_obj.block_documents_over_image_limit = False
         settings_obj.valid_consignation_month = 4
         settings_obj.valid_consignation_year = 2026
         settings_obj.save()
@@ -84,6 +86,8 @@ class ProcessingSettingsAssistantTests(TestCase):
         self.assertEqual(runtime.assistant_model, "assistant-test")
         self.assertEqual(runtime.llm_model, "llm-test")
         self.assertEqual(runtime.vision_model, "vision-test")
+        self.assertEqual(runtime.max_images_warning_threshold, 42)
+        self.assertFalse(runtime.block_documents_over_image_limit)
         self.assertEqual(runtime.valid_consignation_month, 4)
         self.assertEqual(runtime.valid_consignation_year, 2026)
         self.assertIn("fields", runtime.extraction_criteria)
