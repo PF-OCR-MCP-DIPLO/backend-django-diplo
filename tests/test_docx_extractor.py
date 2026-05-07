@@ -71,6 +71,34 @@ def build_docx_with_adjacent_duplicate_content():
     return buffer
 
 
+def build_docx_with_context_body(body_xml):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <w:body>{body_xml}</w:body>
+</w:document>""",
+        )
+        archive.writestr(
+            "word/_rels/document.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdImage1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+  <Relationship Id="rIdImage2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image2.png"/>
+</Relationships>""",
+        )
+        archive.writestr("word/media/image1.png", PNG_ONE)
+        archive.writestr("word/media/image2.png", PNG_TWO)
+    buffer.seek(0)
+    return buffer
+
+
+def image_run(rel_id):
+    return f"""<w:r><w:drawing><a:graphic><a:graphicData><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip r:embed="{rel_id}"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></w:drawing></w:r>"""
+
+
 class DocxExtractorTests(SimpleTestCase):
     """Protege el contrato de orden de imágenes embebidas dentro del DOCX."""
 
@@ -94,4 +122,51 @@ class DocxExtractorTests(SimpleTestCase):
         self.assertEqual(
             images[0].skipped_duplicate_sources[0]["reason"],
             "adjacent_same_binary_content",
+        )
+
+    def test_context_date_heading_applies_to_following_images(self):
+        docx = build_docx_with_context_body(f"""
+            <w:p><w:r><w:t>01 ABRIL 2026</w:t></w:r>{image_run("rIdImage1")}</w:p>
+            <w:p>{image_run("rIdImage2")}</w:p>
+            """)
+
+        images = extract_images_in_order(docx)
+
+        self.assertEqual(
+            [item.context_date_normalized for item in images],
+            ["01/04/2026", "01/04/2026"],
+        )
+        self.assertEqual(images[0].paragraph_index, 1)
+        self.assertEqual(images[0].raw_reference_index, 1)
+
+    def test_context_date_can_be_fragmented_across_runs(self):
+        docx = build_docx_with_context_body(f"""
+            <w:p>
+              <w:r><w:t>0</w:t></w:r>
+              <w:r><w:t>6</w:t></w:r>
+              <w:r><w:t xml:space="preserve"> ABRIL 2026</w:t></w:r>
+            </w:p>
+            <w:p>{image_run("rIdImage1")}</w:p>
+            """)
+
+        images = extract_images_in_order(docx)
+
+        self.assertEqual(images[0].context_date_text, "06 ABRIL 2026")
+        self.assertEqual(images[0].context_date_normalized, "06/04/2026")
+
+    def test_multiple_dates_in_same_paragraph_keep_visual_order(self):
+        docx = build_docx_with_context_body(f"""
+            <w:p>
+              <w:r><w:t>01 ABRIL 2026</w:t></w:r>
+              {image_run("rIdImage1")}
+              <w:r><w:t>02 ABRIL 2026</w:t></w:r>
+              {image_run("rIdImage2")}
+            </w:p>
+            """)
+
+        images = extract_images_in_order(docx)
+
+        self.assertEqual(
+            [item.context_date_normalized for item in images],
+            ["01/04/2026", "02/04/2026"],
         )

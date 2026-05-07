@@ -7,6 +7,7 @@ from django.test import SimpleTestCase, override_settings
 from apps.extraction.services.ocr_service import _get_provider
 from apps.extraction.providers.llm.ollama_text import OllamaTextLLMProvider
 from apps.extraction.providers.ocr.ollama_vision import OllamaVisionOCRProvider
+from apps.extraction.schemas import ConsignacionBasica
 
 
 class FakeResponse:
@@ -21,6 +22,19 @@ class FakeResponse:
 
 
 class OllamaTextProviderTests(SimpleTestCase):
+    def test_schema_accepts_month_name_date_from_bank_exports(self):
+        payload = ConsignacionBasica.model_validate(
+            {
+                "fecha_consignacion": "05/May/26",
+                "hora_consignacion": "10:13:03",
+                "referencia": "PAP 05052026",
+                "valor": 360000,
+            }
+        )
+
+        self.assertEqual(payload.fecha_consignacion, "05/05/2026")
+        self.assertEqual(payload.hora_consignacion, "10:13")
+
     def test_extract_returns_empty_for_blank_ocr(self):
         provider = OllamaTextLLMProvider()
 

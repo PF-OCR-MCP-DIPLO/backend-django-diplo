@@ -227,7 +227,7 @@ if not DEBUG and ALLOW_OPEN_API_FOR_DEV:
     )
 
 DOCX_MAX_UPLOAD_BYTES = int(
-    os.environ.get("DOCX_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))
+    os.environ.get("DOCX_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))
 )
 DOCX_MAX_IMAGES_WARNING_THRESHOLD = int(
     os.environ.get(

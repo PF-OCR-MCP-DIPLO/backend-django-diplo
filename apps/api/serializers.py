@@ -20,6 +20,7 @@ from apps.processing.models import (
 )
 from apps.processing.services.extraction_criteria import normalize_extraction_criteria
 from apps.processing.services.provider_normalization import normalize_ocr_provider
+from apps.processing.services.deposit_description import description_for_deposit
 
 OCR_PROVIDER_VALUES = {"ollama", "openai", "gemini", "deepseek"}
 LLM_PROVIDER_VALUES = {"ollama", "openai", "gemini", "deepseek", "anthropic"}
@@ -44,6 +45,8 @@ class UploadDocumentSerializer(serializers.Serializer):
 class ExtractedDepositSerializer(serializers.ModelSerializer):
     """Expone una consignación extraída o corregida para la UI y exportación."""
 
+    descripcion = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = ExtractedDeposit
         fields = [
@@ -53,11 +56,15 @@ class ExtractedDepositSerializer(serializers.ModelSerializer):
             "hora_consignacion",
             "referencia",
             "valor",
+            "descripcion",
             "is_current_month",
             "observations",
             "structured_payload",
             "created_at",
         ]
+
+    def get_descripcion(self, obj):
+        return description_for_deposit(obj)
 
 
 class SourceImageSerializer(serializers.ModelSerializer):
@@ -73,6 +80,9 @@ class SourceImageSerializer(serializers.ModelSerializer):
             "sequence_index",
             "source_name",
             "content_hash",
+            "context_date",
+            "context_text",
+            "context_payload",
             "ocr_status",
             "ocr_provider",
             "ocr_raw_text",

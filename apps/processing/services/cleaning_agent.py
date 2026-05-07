@@ -46,17 +46,12 @@ class CleaningAgent:
     ]
 
     DATE_PATTERNS = [
-        (r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", r"\1/\2/\3"),  # DD/MM/YYYY
-        (r"(\d{1,2})[/-](\d{1,2})[/-](\d{2})", r"\1/\2/20\3"),  # DD/MM/YY → DD/MM/YYYY
+        (r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", r"\1/\2/\3"),
+        (r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})\b(?!\d)", r"\1/\2/20\3"),
     ]
 
     TIME_PATTERNS = [
         (r"(\d{1,2}):(\d{2})", r"\1:\2"),  # HH:MM
-    ]
-
-    REFERENCE_PATTERNS = [
-        (r"\s+", " "),  # Múltiples espacios → uno
-        (r"[^\w\s/-]", ""),  # Caracteres especiales no alfanuméricos
     ]
 
     def run(self, raw_text: str, runtime_config) -> CleaningResult:
@@ -165,13 +160,8 @@ class CleaningAgent:
         return text, fixes
 
     def _normalize_references(self, text: str) -> tuple[str, int]:
-        """Limpia y normaliza referencias."""
-        fixes = 0
-        original = text
-        for pattern, replacement in self.REFERENCE_PATTERNS:
-            text = re.sub(pattern, replacement, text)
-        fixes = 1 if text != original else 0
-        return text, fixes
+        """Conserva el texto OCR completo para no destruir montos, fechas u horas."""
+        return text, 0
 
     def _calculate_confidence(
         self, original_len: int, final_len: int, corrections: int, text: str

@@ -13,7 +13,12 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.processing.models import ExtractionLog, ProcessingSettings, ProcessRun, SourceImage
+from apps.processing.models import (
+    ExtractionLog,
+    ProcessingSettings,
+    ProcessRun,
+    SourceImage,
+)
 from apps.processing.services.diagnostics import (
     is_terminal_status,
     redact_trace_payload,

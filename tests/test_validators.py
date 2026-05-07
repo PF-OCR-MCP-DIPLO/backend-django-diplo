@@ -146,3 +146,28 @@ class ExtractionSchemaTests(SimpleTestCase):
 
         self.assertTrue(is_current_month)
         self.assertNotIn("Fecha fuera del periodo valido configurado", observations)
+
+    def test_hora_consignacion_normalizes_12h_to_24h(self):
+        cases = {
+            "2:00 pm": "14:00",
+            "2:00 p. m.": "14:00",
+            "02:00 PM": "14:00",
+            "11:49 a. m.": "11:49",
+            "12:00 am": "00:00",
+            "12:00 a. m.": "00:00",
+            "12:00 pm": "12:00",
+            "12:00 p. m.": "12:00",
+            "05:52": "05:52",
+            "14:30": "14:30",
+            "10:13:03": "10:13",
+        }
+
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                record = ConsignacionBasica(
+                    fecha_consignacion="15/04/2026",
+                    hora_consignacion=raw,
+                    referencia="ABC123",
+                    valor="50.000,00",
+                )
+                self.assertEqual(record.hora_consignacion, expected)

@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import replace
+import re
 
 from django.db import IntegrityError
 
@@ -20,6 +21,7 @@ from apps.processing.services.retry_agent import RetryAgent, RetryStrategy
 from apps.processing.services.validation_agent import ValidationAgent
 
 SIGNIFICANT_OCR_MIN_CHARS = 20
+GENERIC_REFERENCES = {"nequi", "banco", "disponible", "pap"}
 
 
 def _active_ocr_model(runtime_config):
@@ -52,6 +54,44 @@ def _record_skip_reason(record):
 
 def _valid_record_count(records):
     return sum(1 for record in records if not _record_skip_reason(record))
+
+
+def _amount_reject_reason(record):
+    amount = normalize_amount(record.get("valor") if isinstance(record, dict) else None)
+    if amount is None:
+        return "missing_transaction_amount"
+    if amount == amount.to_integral_value():
+        integer = int(amount)
+        if 1900 <= integer <= 2100:
+            return "amount_looks_like_year"
+        digits = str(integer)
+        if len(digits) in {3, 4}:
+            hour = int(digits[:-2])
+            minute = int(digits[-2:])
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return "amount_looks_like_time"
+        if len(digits) in {9, 10} and digits.startswith("3"):
+            return "amount_looks_like_phone"
+    return ""
+
+
+def _reference_reject_reason(record):
+    referencia = str(record.get("referencia") if isinstance(record, dict) else "")
+    normalized = re.sub(r"\s+", " ", referencia.strip()).lower()
+    if not normalized:
+        return "missing_transaction_reference"
+    if normalized in GENERIC_REFERENCES:
+        return "reference_too_generic"
+    return ""
+
+
+def _candidate_reject_reason(record):
+    if not isinstance(record, dict):
+        return "record_payload_is_not_object"
+    amount_reason = _amount_reject_reason(record)
+    if amount_reason:
+        return amount_reason
+    return _reference_reject_reason(record)
 
 
 class OCRAgent:
@@ -145,6 +185,63 @@ class ValidationPersistenceAgent:
         created_records = 0
         skipped_records = 0
         for index, structured_record in enumerate(deduplicated_records, start=1):
+            candidate_reject_reason = _candidate_reject_reason(structured_record)
+            if candidate_reject_reason:
+                skipped_records += 1
+                if log_callback:
+                    log_callback(
+                        process_run,
+                        source_image,
+                        "candidate_record_validation",
+                        runtime_config,
+                        agent="ValidationPersistenceAgent",
+                        notes=(
+                            "Candidate record rejected before persistence: "
+                            f"{candidate_reject_reason}"
+                        ),
+                        is_error=True,
+                        raw_payload={
+                            "record_index": index,
+                            "candidate_status": "rejected",
+                            "reason": candidate_reject_reason,
+                            "record_payload": structured_record,
+                            "structured_records_count": len(deduplicated_records),
+                            "persisted_records_count": created_records,
+                        },
+                    )
+                    log_callback(
+                        process_run,
+                        source_image,
+                        "record_skipped",
+                        runtime_config,
+                        agent="ValidationPersistenceAgent",
+                        notes=(
+                            "Structured record skipped: " f"{candidate_reject_reason}"
+                        ),
+                        is_error=True,
+                        raw_payload={
+                            "record_index": index,
+                            "reason": candidate_reject_reason,
+                            "record_payload": structured_record,
+                            "structured_records_count": len(deduplicated_records),
+                            "persisted_records_count": created_records,
+                        },
+                    )
+                continue
+            if log_callback:
+                log_callback(
+                    process_run,
+                    source_image,
+                    "candidate_record_validation",
+                    runtime_config,
+                    agent="ValidationPersistenceAgent",
+                    notes="Candidate record accepted for persistence.",
+                    raw_payload={
+                        "record_index": index,
+                        "candidate_status": "accepted",
+                        "record_payload": structured_record,
+                    },
+                )
             skip_reason = _record_skip_reason(structured_record)
             if skip_reason:
                 skipped_records += 1
@@ -398,7 +495,9 @@ class ProcessingSupervisorAgent:
                         agent="ValidationAgent",
                         attempt=attempt_number,
                         notes=f"All records valid (attempt {attempt_number}, confidence: {avg_confidence:.2f})",
-                        input_payload={"records_count": len(structured_result["records"])},
+                        input_payload={
+                            "records_count": len(structured_result["records"])
+                        },
                         output_payload={
                             "records_validated": len(validation_results),
                             "avg_confidence": avg_confidence,
@@ -419,7 +518,9 @@ class ProcessingSupervisorAgent:
                         agent="ValidationAgent",
                         attempt=attempt_number,
                         notes=f"Validation failed for {failed_count}/{len(validation_results)} records (attempt {attempt_number})",
-                        input_payload={"records_count": len(structured_result["records"])},
+                        input_payload={
+                            "records_count": len(structured_result["records"])
+                        },
                         output_payload={
                             "failed_records": failed_count,
                             "total_records": len(validation_results),
@@ -805,9 +906,97 @@ class ProcessingSupervisorAgent:
                 }
                 event["decision"] = "structured OCR text into deposit records"
                 event.update(result.get("payload") or {})
+            self._log_structuring_diagnostics(
+                process_run,
+                source_image,
+                result,
+                runtime_config,
+                log_callback,
+                attempt_number,
+            )
             return result
         except Exception as e:
             return {"error": str(e), "records": []}
+
+    def _log_structuring_diagnostics(
+        self,
+        process_run,
+        source_image,
+        result,
+        runtime_config,
+        log_callback,
+        attempt_number,
+    ):
+        payload = result.get("payload") or {}
+        failure_event = payload.get("llm_failure_event")
+        if failure_event:
+            stage = (
+                failure_event if str(failure_event).startswith("llm_") else "llm_error"
+            )
+            log_callback(
+                process_run,
+                source_image,
+                stage,
+                runtime_config,
+                agent="StructuringAgent",
+                attempt=attempt_number,
+                notes=str(failure_event),
+                is_error=not result.get("records"),
+                raw_payload={
+                    "event": failure_event,
+                    "provider_response_chars": payload.get("response_chars"),
+                    "clean_response_chars": payload.get("clean_response_chars"),
+                    "provider_error_class": payload.get("provider_error_class"),
+                    "provider_error_message": payload.get("provider_error_message"),
+                },
+            )
+        if payload.get("heuristic_fallback_started"):
+            log_callback(
+                process_run,
+                source_image,
+                "heuristic_fallback_started",
+                runtime_config,
+                agent="StructuringAgent",
+                attempt=attempt_number,
+                notes="LLM produced no accepted records; starting conservative heuristic fallback.",
+                raw_payload={
+                    "llm_structured_records_count": payload.get(
+                        "llm_structured_records_count"
+                    ),
+                    "reason": failure_event or "no_llm_records",
+                },
+            )
+            for candidate in payload.get("heuristic_candidates") or []:
+                reason = candidate.get("reason")
+                if reason == "selected_transaction_amount":
+                    continue
+                log_callback(
+                    process_run,
+                    source_image,
+                    "heuristic_candidate_rejected",
+                    runtime_config,
+                    agent="StructuringAgent",
+                    attempt=attempt_number,
+                    notes=reason or "heuristic candidate rejected",
+                    raw_payload=candidate,
+                )
+            log_callback(
+                process_run,
+                source_image,
+                "heuristic_fallback_completed",
+                runtime_config,
+                agent="StructuringAgent",
+                attempt=attempt_number,
+                notes=(
+                    "Heuristic fallback produced "
+                    f"{payload.get('heuristic_records_count') or 0} record(s)."
+                ),
+                raw_payload={
+                    "heuristic_records_count": payload.get("heuristic_records_count"),
+                    "heuristic_rejected_count": payload.get("heuristic_rejected_count"),
+                    "candidates": payload.get("heuristic_candidates") or [],
+                },
+            )
 
     def _run_auto_structuring_selection(
         self, process_run, source_image, ocr_result, runtime_config, log_callback

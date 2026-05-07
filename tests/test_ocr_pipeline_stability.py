@@ -4,7 +4,13 @@ from django.core.files.base import ContentFile
 from django.test import SimpleTestCase, TestCase
 
 from apps.extraction.services.ocr_service import score_ocr_text
+from apps.extraction.services.structuring_service import (
+    extract_heuristic_records,
+    extract_structured_data,
+)
 from apps.processing.models import ExtractionLog, ProcessRun, SourceImage
+from apps.processing.services.agents import ValidationPersistenceAgent
+from apps.processing.services.cleaning_agent import CleaningAgent
 from apps.processing.services.orchestrator import process_prepared_job
 from apps.processing.services.settings_service import RuntimeProcessingConfig
 
@@ -31,6 +37,83 @@ class OcrPipelineStabilityTests(SimpleTestCase):
             ),
             10,
         )
+
+    def test_heuristic_fallback_rejects_year_as_amount(self):
+        diagnostics = []
+        records = extract_heuristic_records(
+            "Referencia M08326455 Fecha 01 ABRIL 2026 Valor 2026",
+            "image.png",
+            diagnostics=diagnostics,
+        )
+
+        self.assertEqual(records, [])
+        self.assertIn(
+            "amount_looks_like_year", {item.get("reason") for item in diagnostics}
+        )
+
+    def test_heuristic_fallback_rejects_compact_time_as_amount(self):
+        diagnostics = []
+        records = extract_heuristic_records(
+            "Referencia M08326455 Valor 1149 Fecha 01 ABRIL 2026",
+            "image.png",
+            diagnostics=diagnostics,
+        )
+
+        self.assertEqual(records, [])
+        self.assertIn(
+            "amount_looks_like_time", {item.get("reason") for item in diagnostics}
+        )
+
+    def test_heuristic_fallback_rejects_colombian_phone_as_amount(self):
+        diagnostics = []
+        records = extract_heuristic_records(
+            "Referencia M08326455 Valor 3176771287 Numero Nequi 3176771287",
+            "image.png",
+            diagnostics=diagnostics,
+        )
+
+        self.assertEqual(records, [])
+        self.assertIn(
+            "amount_looks_like_phone", {item.get("reason") for item in diagnostics}
+        )
+
+    def test_heuristic_fallback_nequi_extracts_single_real_record(self):
+        diagnostics = []
+        records = extract_heuristic_records(
+            "Pago exitoso Nequi\n"
+            "¿Cuánto? $70.000,00\n"
+            "Fecha 01 de abril de 2026 a las 11:49 a. m.\n"
+            "Referencia M08326455\n"
+            "Número Nequi 317036520",
+            "image1.png",
+            diagnostics=diagnostics,
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["fecha_consignacion"], "01/04/2026")
+        self.assertEqual(records[0]["hora_consignacion"], "11:49")
+        self.assertEqual(records[0]["referencia"], "M08326455")
+        self.assertEqual(records[0]["valor"], 70000.0)
+
+    def test_cleaning_agent_does_not_corrupt_four_digit_year_dates(self):
+        result = CleaningAgent().run(
+            "Fecha de proceso: 05/05/2026 Importe Total: 360.000,00",
+            None,
+        )
+
+        self.assertIn("05/05/2026", result.cleaned_text)
+        self.assertNotIn("202026", result.cleaned_text)
+
+
+class FakeStructuringProvider:
+    def __init__(self, records):
+        self.records = records
+        self.last_error = None
+        self.last_response_text = '{"consignaciones":[]}'
+        self.last_clean_response_text = '{"consignaciones":[]}'
+
+    def extract(self, *args, **kwargs):
+        return [dict(record) for record in self.records]
 
 
 def _runtime_config(ocr_mode="vision"):
@@ -99,6 +182,84 @@ def _record(index, referencia=None, valor=50000.0):
 
 
 class OcrPipelineDiagnosticsRegressionTests(TestCase):
+    def test_contextual_date_is_used_when_image_has_no_explicit_date(self):
+        source_image = SourceImage(
+            source_name="image-context.png",
+            context_date="04/04/2026",
+            context_text="04 ABRIL 2026",
+        )
+        config = _runtime_config("vision")
+
+        with patch(
+            "apps.extraction.services.structuring_service.get_llm_provider",
+            return_value=FakeStructuringProvider(
+                [{"referencia": "MCTX001", "valor": 30000.0}]
+            ),
+        ):
+            result = extract_structured_data(
+                source_image,
+                "Referencia MCTX001 Valor $30.000,00",
+                config,
+            )
+
+        self.assertEqual(result["records"][0]["fecha_consignacion"], "04/04/2026")
+        self.assertEqual(
+            result["records"][0]["_date_resolution"]["date_source"], "docx_context"
+        )
+
+    def test_explicit_image_date_wins_over_context_date(self):
+        source_image = SourceImage(
+            source_name="image54.png",
+            context_date="30/04/2026",
+            context_text="30 ABRIL 2026",
+        )
+        config = _runtime_config("vision")
+
+        with patch(
+            "apps.extraction.services.structuring_service.get_llm_provider",
+            return_value=FakeStructuringProvider(
+                [{"referencia": "MAYO360", "valor": 360000.0}]
+            ),
+        ):
+            result = extract_structured_data(
+                source_image,
+                "Fecha 05/05/2026 Referencia MAYO360 Valor $360.000,00",
+                config,
+            )
+
+        self.assertEqual(result["records"][0]["fecha_consignacion"], "05/05/2026")
+        self.assertEqual(
+            result["records"][0]["_date_resolution"]["date_source"],
+            "image_explicit",
+        )
+
+    def test_image54_may_date_is_marked_outside_april_period(self):
+        job = _create_job_with_images(1)
+        source_image = job.source_images.get()
+        config = _runtime_config("vision")
+        agent = ValidationPersistenceAgent()
+
+        created = agent.run(
+            job,
+            source_image,
+            [
+                {
+                    "fecha_consignacion": "05/05/2026",
+                    "hora_consignacion": "09:00",
+                    "referencia": "MAYO360",
+                    "valor": 360000.0,
+                }
+            ],
+            config,
+        )
+
+        self.assertEqual(created, 1)
+        deposit = job.deposits.get()
+        self.assertFalse(deposit.is_current_month)
+        self.assertIn(
+            "Fecha fuera del periodo valido configurado", deposit.observations
+        )
+
     def test_tesseract_five_images_incomplete_record_is_not_silent(self):
         job = _create_job_with_images(5)
         config = _runtime_config("tesseract")

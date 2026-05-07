@@ -82,6 +82,9 @@ class SourceImage(models.Model):
     image_file = models.FileField(upload_to="process_runs/%Y/%m/%d/images/")
     source_name = models.CharField(max_length=255)
     content_hash = models.CharField(max_length=64, blank=True)
+    context_date = models.CharField(max_length=10, blank=True)
+    context_text = models.TextField(blank=True)
+    context_payload = models.JSONField(default=dict, blank=True)
     ocr_status = models.CharField(
         max_length=32, choices=OCRStatus.choices, default=OCRStatus.PENDING
     )

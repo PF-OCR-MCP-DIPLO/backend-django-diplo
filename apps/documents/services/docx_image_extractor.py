@@ -5,9 +5,11 @@ de las imágenes y el texto base que sirve como contexto de procesamiento.
 """
 
 import posixpath
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
+from datetime import date
 from hashlib import sha256
 from pathlib import PurePosixPath
 
@@ -18,7 +20,34 @@ NAMESPACES = {
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
     "v": "urn:schemas-microsoft-com:vml",
     "pr": "http://schemas.openxmlformats.org/package/2006/relationships",
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
 }
+
+MONTH_NAMES = {
+    "ENERO": 1,
+    "FEBRERO": 2,
+    "MARZO": 3,
+    "ABRIL": 4,
+    "MAYO": 5,
+    "JUNIO": 6,
+    "JULIO": 7,
+    "AGOSTO": 8,
+    "SEPTIEMBRE": 9,
+    "SETIEMBRE": 9,
+    "OCTUBRE": 10,
+    "NOVIEMBRE": 11,
+    "DICIEMBRE": 12,
+}
+
+TEXTUAL_DATE_RE = re.compile(
+    r"\b(?P<day>\d{1,2})\s*(?:DE\s+)?(?P<month>"
+    + "|".join(MONTH_NAMES)
+    + r")\s*(?:DE\s+)?(?P<year>20\d{2}|\d{2})\b",
+    re.IGNORECASE,
+)
+NUMERIC_DATE_RE = re.compile(
+    r"\b(?P<day>\d{1,2})[/-](?P<month>\d{1,2})[/-](?P<year>20\d{2}|\d{2})\b"
+)
 
 
 @dataclass
@@ -31,6 +60,12 @@ class ExtractedImageFile:
     content_hash: str = ""
     relationship_id: str = ""
     package_target: str = ""
+    context_date_text: str = ""
+    context_date_normalized: str = ""
+    context_heading_text: str = ""
+    paragraph_index: int = 0
+    run_index: int = 0
+    raw_reference_index: int = 0
     skipped_duplicate_sources: list[dict] | None = None
 
 
@@ -70,67 +105,97 @@ def extract_images_in_order(docx_file):
                 5 * 1024 * 1024,
             )
         )
-        for element in document_root.iter():
-            rel_id = _extract_relationship_id(element)
-            if not rel_id:
-                continue
-            target = rel_map.get(rel_id)
-            if not target or target not in archive.namelist():
-                continue
-            raw_reference_index += 1
-            binary = archive.read(target)
-            if len(binary) > max_image_bytes:
-                raise DocxUnsupportedContentError(
-                    "Extracted image exceeds maximum allowed size."
-                )
-            content_hash = sha256(binary).hexdigest()
-            source_name = PurePosixPath(target).name
-            duplicate_of = seen_targets.get(target)
-            duplicate_reason = "same_package_target" if duplicate_of else ""
-            previous_content = seen_recent_content.get(content_hash)
-            if not duplicate_of and previous_content:
-                previous_reference_index, previous_image = previous_content
-                if raw_reference_index - previous_reference_index <= 1:
-                    duplicate_of = previous_image
-                    duplicate_reason = "adjacent_same_binary_content"
+        current_context = _empty_context()
+        paragraphs = list(document_root.findall(".//w:p", NAMESPACES))
+        for paragraph_index, paragraph in enumerate(paragraphs, start=1):
+            paragraph_text = ""
+            paragraph_context = current_context
+            runs = list(paragraph.findall("w:r", NAMESPACES))
+            for run_index, run in enumerate(runs, start=1):
+                run_text = _run_text(run)
+                if run_text:
+                    paragraph_text += _separator_before_run_text(
+                        paragraph_text, run_text
+                    )
+                    paragraph_text += run_text
+                    detected = _last_date_context(paragraph_text)
+                    if detected:
+                        paragraph_context = {
+                            **detected,
+                            "paragraph_index": paragraph_index,
+                            "run_index": run_index,
+                            "heading_text": paragraph_text.strip(),
+                        }
+                        current_context = paragraph_context
 
-            if duplicate_of:
-                duplicate_of.skipped_duplicate_sources = (
-                    duplicate_of.skipped_duplicate_sources or []
-                )
-                duplicate_of.skipped_duplicate_sources.append(
-                    {
-                        "source_name": source_name,
-                        "relationship_id": rel_id,
-                        "package_target": target,
-                        "content_hash": content_hash,
-                        "raw_reference_index": raw_reference_index,
-                        "reason": duplicate_reason,
-                    }
-                )
-                seen_targets[target] = duplicate_of
-                seen_recent_content[content_hash] = (
-                    raw_reference_index,
-                    duplicate_of,
-                )
-                continue
+                for rel_id in _extract_relationship_ids(run):
+                    target = rel_map.get(rel_id)
+                    if not target or target not in archive.namelist():
+                        continue
+                    raw_reference_index += 1
+                    binary = archive.read(target)
+                    if len(binary) > max_image_bytes:
+                        raise DocxUnsupportedContentError(
+                            "Extracted image exceeds maximum allowed size."
+                        )
+                    content_hash = sha256(binary).hexdigest()
+                    source_name = PurePosixPath(target).name
+                    duplicate_of = seen_targets.get(target)
+                    duplicate_reason = "same_package_target" if duplicate_of else ""
+                    previous_content = seen_recent_content.get(content_hash)
+                    if not duplicate_of and previous_content:
+                        previous_reference_index, previous_image = previous_content
+                        if raw_reference_index - previous_reference_index <= 1:
+                            duplicate_of = previous_image
+                            duplicate_reason = "adjacent_same_binary_content"
 
-            sequence_index = len(images) + 1
-            extracted = ExtractedImageFile(
-                sequence_index=sequence_index,
-                source_name=source_name,
-                binary=binary,
-                content_hash=content_hash,
-                relationship_id=rel_id,
-                package_target=target,
-                skipped_duplicate_sources=[],
-            )
-            images.append(extracted)
-            seen_targets[target] = extracted
-            seen_recent_content[content_hash] = (
-                raw_reference_index,
-                extracted,
-            )
+                    if duplicate_of:
+                        duplicate_of.skipped_duplicate_sources = (
+                            duplicate_of.skipped_duplicate_sources or []
+                        )
+                        duplicate_of.skipped_duplicate_sources.append(
+                            {
+                                "source_name": source_name,
+                                "relationship_id": rel_id,
+                                "package_target": target,
+                                "content_hash": content_hash,
+                                "raw_reference_index": raw_reference_index,
+                                "paragraph_index": paragraph_index,
+                                "run_index": run_index,
+                                "reason": duplicate_reason,
+                            }
+                        )
+                        seen_targets[target] = duplicate_of
+                        seen_recent_content[content_hash] = (
+                            raw_reference_index,
+                            duplicate_of,
+                        )
+                        continue
+
+                    sequence_index = len(images) + 1
+                    extracted = ExtractedImageFile(
+                        sequence_index=sequence_index,
+                        source_name=source_name,
+                        binary=binary,
+                        content_hash=content_hash,
+                        relationship_id=rel_id,
+                        package_target=target,
+                        context_date_text=paragraph_context.get("date_text", ""),
+                        context_date_normalized=paragraph_context.get(
+                            "date_normalized", ""
+                        ),
+                        context_heading_text=paragraph_context.get("heading_text", ""),
+                        paragraph_index=paragraph_index,
+                        run_index=run_index,
+                        raw_reference_index=raw_reference_index,
+                        skipped_duplicate_sources=[],
+                    )
+                    images.append(extracted)
+                    seen_targets[target] = extracted
+                    seen_recent_content[content_hash] = (
+                        raw_reference_index,
+                        extracted,
+                    )
         return images
 
 
@@ -173,3 +238,95 @@ def _extract_relationship_id(element):
     if embed:
         return embed
     return element.attrib.get(f"{{{NAMESPACES['r']}}}id")
+
+
+def _extract_relationship_ids(element):
+    rel_ids = []
+    seen = set()
+    for child in element.iter():
+        rel_id = _extract_relationship_id(child)
+        if rel_id and rel_id not in seen:
+            rel_ids.append(rel_id)
+            seen.add(rel_id)
+    return rel_ids
+
+
+def _run_text(run):
+    parts = []
+    for text in run.findall(".//w:t", NAMESPACES):
+        if text.text:
+            parts.append(text.text)
+    return "".join(parts)
+
+
+def _separator_before_run_text(current_text, run_text):
+    if not current_text or not run_text or run_text[:1].isspace():
+        return ""
+    if not current_text[-1:].isdigit() or not run_text[:1].isdigit():
+        return ""
+    trailing_digits = re.search(r"\d+$", current_text)
+    if trailing_digits and len(trailing_digits.group(0)) >= 2:
+        return " "
+    return ""
+
+
+def _empty_context():
+    return {
+        "date_text": "",
+        "date_normalized": "",
+        "heading_text": "",
+        "paragraph_index": 0,
+        "run_index": 0,
+    }
+
+
+def _last_date_context(text):
+    matches = []
+    for match in TEXTUAL_DATE_RE.finditer(text or ""):
+        normalized = _normalize_textual_date(match)
+        if normalized:
+            matches.append((match.start(), match.group(0), normalized))
+    for match in NUMERIC_DATE_RE.finditer(text or ""):
+        normalized = _normalize_numeric_date(match)
+        if normalized:
+            matches.append((match.start(), match.group(0), normalized))
+    if not matches:
+        return None
+    _, date_text, normalized = max(matches, key=lambda item: item[0])
+    return {
+        "date_text": re.sub(r"\s+", " ", date_text).strip(),
+        "date_normalized": normalized,
+    }
+
+
+def _normalize_textual_date(match):
+    month_name = match.group("month").upper()
+    month = MONTH_NAMES.get(month_name)
+    if not month:
+        return ""
+    return _safe_local_date(
+        int(match.group("day")),
+        month,
+        _normalize_year(match.group("year")),
+    )
+
+
+def _normalize_numeric_date(match):
+    return _safe_local_date(
+        int(match.group("day")),
+        int(match.group("month")),
+        _normalize_year(match.group("year")),
+    )
+
+
+def _normalize_year(value):
+    year = int(value)
+    return year + 2000 if year < 100 else year
+
+
+def _safe_local_date(day, month, year):
+    try:
+        parsed = date(year, month, day)
+    except ValueError:
+        return ""
+    return parsed.strftime("%d/%m/%Y")

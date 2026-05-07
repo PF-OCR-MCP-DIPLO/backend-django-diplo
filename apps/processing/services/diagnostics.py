@@ -488,6 +488,9 @@ def summarize_job_diagnostics(job: ProcessRun) -> dict[str, Any]:
                 "id": image.pk,
                 "sequence_index": image.sequence_index,
                 "source_name": image.source_name,
+                "context_date": image.context_date,
+                "context_text": image.context_text,
+                "context_payload": redact_trace_payload(image.context_payload),
                 "ocr_status": image.ocr_status,
                 "image_file": image.image_file.url if image.image_file else "",
                 "image_bytes": image_meta.get("image_bytes"),
@@ -618,6 +621,93 @@ def summarize_processing_trace(job: ProcessRun) -> dict[str, Any]:
         .filter(ocr_status=SourceImage.OCRStatus.FAILED)
         .count()
     )
+    source_images = []
+    for image in real_source_images_queryset(job).prefetch_related(
+        "deposits", "extraction_logs"
+    ):
+        image_logs = list(image.extraction_logs.order_by("id"))
+        llm_logs = [
+            log for log in image_logs if log.stage.startswith("llm_structuring")
+        ]
+        fallback_logs = [
+            log for log in image_logs if log.stage.startswith("heuristic_fallback")
+        ]
+        validation_logs = [
+            log for log in image_logs if log.stage == "candidate_record_validation"
+        ]
+        payloads = [log.raw_payload or {} for log in llm_logs]
+        explicit_ocr_date = next(
+            (
+                payload.get("explicit_ocr_date")
+                for payload in payloads
+                if payload.get("explicit_ocr_date")
+            ),
+            None,
+        )
+        final_date_source = next(
+            (
+                payload.get("final_date_source")
+                for payload in payloads
+                if payload.get("final_date_source")
+            ),
+            None,
+        )
+        first_deposit = image.deposits.order_by("id").first()
+        final_date_used = first_deposit.fecha_consignacion if first_deposit else None
+        final_date_text = (
+            final_date_used.strftime("%d/%m/%Y")
+            if hasattr(final_date_used, "strftime")
+            else final_date_used
+        )
+        if not final_date_source and final_date_text:
+            if explicit_ocr_date and final_date_text == explicit_ocr_date:
+                final_date_source = "image_explicit"
+            elif image.context_date and final_date_text == image.context_date:
+                final_date_source = "docx_context"
+            else:
+                final_date_source = "record"
+        source_images.append(
+            {
+                "id": image.pk,
+                "sequence_index": image.sequence_index,
+                "source_name": image.source_name,
+                "context_date": image.context_date,
+                "context_text": image.context_text,
+                "context_payload": redact_trace_payload(image.context_payload),
+                "explicit_ocr_date": explicit_ocr_date,
+                "final_date": final_date_used,
+                "final_date_used": final_date_used,
+                "date_source": final_date_source,
+                "final_date_source": final_date_source,
+                "llm_candidates_count": sum(
+                    int(
+                        (log.raw_payload or {}).get("llm_structured_records_count") or 0
+                    )
+                    for log in llm_logs
+                ),
+                "fallback_candidates_count": sum(
+                    int((log.raw_payload or {}).get("heuristic_records_count") or 0)
+                    for log in fallback_logs
+                ),
+                "rejected_candidates": [
+                    log.raw_payload
+                    for log in validation_logs
+                    if (log.raw_payload or {}).get("candidate_status") == "rejected"
+                ],
+                "persisted_records": [
+                    {
+                        "id": deposit.pk,
+                        "fecha_consignacion": deposit.fecha_consignacion,
+                        "hora_consignacion": deposit.hora_consignacion,
+                        "referencia": deposit.referencia,
+                        "valor": str(deposit.valor),
+                        "is_current_month": deposit.is_current_month,
+                        "observations": deposit.observations,
+                    }
+                    for deposit in image.deposits.order_by("id")
+                ],
+            }
+        )
     duration_ms = None
     if job.started_at and job.finished_at:
         duration_ms = int((job.finished_at - job.started_at).total_seconds() * 1000)
@@ -636,6 +726,7 @@ def summarize_processing_trace(job: ProcessRun) -> dict[str, Any]:
             "total_records": job.deposits.count(),
             "terminal_status": is_terminal_status(job.status),
         },
+        "source_images": source_images,
         "events": [_trace_event(log) for log in logs],
     }
 

@@ -27,6 +27,7 @@ from apps.processing.services.settings_service import (
 )
 
 logger = logging.getLogger(__name__)
+PIPELINE_QUALITY_VERSION = "docx-context-conservative-fallback-v2"
 
 
 def create_process_run_from_upload(uploaded_file):
@@ -180,6 +181,16 @@ def create_process_run_from_upload(uploaded_file):
                     source_name=extracted.source_name,
                     content_hash=extracted.content_hash
                     or sha256(extracted.binary).hexdigest(),
+                    context_date=extracted.context_date_normalized,
+                    context_text=extracted.context_heading_text,
+                    context_payload={
+                        "context_date_text": extracted.context_date_text,
+                        "context_date_normalized": (extracted.context_date_normalized),
+                        "context_heading_text": extracted.context_heading_text,
+                        "paragraph_index": extracted.paragraph_index,
+                        "run_index": extracted.run_index,
+                        "raw_reference_index": extracted.raw_reference_index,
+                    },
                     ocr_status=SourceImage.OCRStatus.PENDING,
                 )
                 source_image.image_file.save(
@@ -192,6 +203,9 @@ def create_process_run_from_upload(uploaded_file):
                     "source_name": source_image.source_name,
                     "relationship_id": extracted.relationship_id,
                     "package_target": extracted.package_target,
+                    "context_date": source_image.context_date,
+                    "context_text": source_image.context_text,
+                    "context_payload": source_image.context_payload,
                 }
                 record_processing_event(
                     process_run=process_run,
@@ -281,6 +295,7 @@ def _build_processing_fingerprint(source_hash, provider_snapshot):
         "block_documents_over_image_limit": provider_snapshot.get(
             "block_documents_over_image_limit"
         ),
+        "pipeline_quality_version": PIPELINE_QUALITY_VERSION,
     }
     encoded = json.dumps(relevant_config, sort_keys=True, default=str).encode("utf-8")
     return sha256(encoded).hexdigest()
