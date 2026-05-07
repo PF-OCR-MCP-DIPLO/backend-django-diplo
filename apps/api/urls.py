@@ -18,6 +18,7 @@ from apps.api.views import (
     JobLogsView,
     JobProcessView,
     JobProcessingStateView,
+    JobTraceView,
     JobDepositReprocessView,
     JobReprocessFailedView,
     JobSourceImageReprocessView,
@@ -45,6 +46,7 @@ urlpatterns = [
         name="job-deposit-reprocess",
     ),
     path("jobs/<int:pk>/logs/", JobLogsView.as_view(), name="job-logs"),
+    path("jobs/<int:pk>/trace/", JobTraceView.as_view(), name="job-trace"),
     path(
         "jobs/<int:pk>/diagnostics/",
         JobDiagnosticsView.as_view(),

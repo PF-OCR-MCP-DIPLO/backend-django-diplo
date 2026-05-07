@@ -34,6 +34,7 @@ from apps.processing.models import ProcessRun
 from apps.processing.services.excel_exporter import export_job_to_excel
 from apps.processing.services.diagnostics import (
     summarize_job_diagnostics,
+    summarize_processing_trace,
     summarize_processing_state,
     summarize_provider_health,
 )
@@ -334,6 +335,24 @@ class JobDiagnosticsView(APIView):
             pk=pk,
         )
         return Response(summarize_job_diagnostics(job))
+
+
+class JobTraceView(APIView):
+    """Devuelve una trazabilidad estructurada del pipeline por etapa/agente."""
+
+    authentication_classes = []
+    permission_classes = [ApiKeyPermission]
+
+    def get(self, request, pk):
+        job = get_object_or_404(
+            ProcessRun.objects.prefetch_related(
+                "source_images__deposits",
+                "source_images__extraction_logs",
+                "extraction_logs",
+            ),
+            pk=pk,
+        )
+        return Response(summarize_processing_trace(job))
 
 
 class JobProcessingStateView(APIView):

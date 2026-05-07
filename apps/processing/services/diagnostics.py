@@ -25,6 +25,24 @@ from apps.processing.services.settings_service import (
 
 MAX_DEBUG_TEXT = 500
 STALE_PROCESSING_SECONDS = 300
+TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
+SENSITIVE_TRACE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "password",
+    "secret",
+    "token",
+    "ocr_api_key",
+    "llm_api_key",
+    "assistant_api_key",
+}
+
+
+def is_terminal_status(status: str | None) -> bool:
+    """Indica si un estado de ProcessRun ya no debe seguir en polling."""
+    return str(status or "") in TERMINAL_STATUSES
 
 
 def real_source_images_queryset(process_run: ProcessRun):
@@ -40,6 +58,42 @@ def truncate_debug_text(text: str | None, max_chars: int = MAX_DEBUG_TEXT) -> st
     if len(value) <= max_chars:
         return value
     return f"{value[:max_chars]}...[truncated {len(value) - max_chars} chars]"
+
+
+def _trace_max_chars() -> int:
+    try:
+        return max(500, int(getattr(settings, "TRACE_PAYLOAD_MAX_CHARS", 4000)))
+    except (TypeError, ValueError):
+        return 4000
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return normalized in SENSITIVE_TRACE_KEYS or normalized.endswith("_api_key")
+
+
+def redact_trace_payload(value: Any, *, max_chars: int | None = None) -> Any:
+    """Redacta secretos y recorta payloads antes de persistir o exponer trazas."""
+    limit = max_chars or _trace_max_chars()
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            if _is_sensitive_key(str(key)):
+                clean[key] = "[redacted]"
+            else:
+                clean[key] = redact_trace_payload(item, max_chars=limit)
+        return clean
+    if isinstance(value, list):
+        return [redact_trace_payload(item, max_chars=limit) for item in value[:50]]
+    if isinstance(value, tuple):
+        return [redact_trace_payload(item, max_chars=limit) for item in value[:50]]
+    if isinstance(value, bytes):
+        return f"[bytes:{len(value)}]"
+    if isinstance(value, str):
+        if value.startswith("data:") and ";base64," in value[:100]:
+            return "[redacted-base64-data-url]"
+        return truncate_debug_text(value, limit)
+    return value
 
 
 def get_process_memory_mb() -> float | None:
@@ -107,6 +161,11 @@ def record_processing_event(
     image_width: int | None = None,
     image_height: int | None = None,
     error: BaseException | None = None,
+    agent: str = "",
+    attempt: int = 0,
+    input_payload: dict[str, Any] | None = None,
+    output_payload: dict[str, Any] | None = None,
+    decision: str = "",
     notes: str = "",
     raw_payload: dict[str, Any] | None = None,
 ) -> ExtractionLog | None:
@@ -125,6 +184,8 @@ def record_processing_event(
         provider = provider or _runtime_value(runtime_config, "llm_provider")
         model = model or _runtime_value(runtime_config, "llm_model")
         ocr_mode = ocr_mode or _runtime_value(runtime_config, "ocr_mode")
+    agent = agent or payload.get("agent") or ""
+    attempt = int(attempt or payload.get("attempt") or 0)
 
     if source_image is not None:
         payload.setdefault("source_image_id", source_image.pk)
@@ -149,6 +210,8 @@ def record_processing_event(
             "sequence_index": sequence_index,
             "stage": stage,
             "status": status,
+            "agent": agent,
+            "attempt": attempt,
             "provider": provider,
             "model": model,
             "ocr_mode": ocr_mode,
@@ -167,12 +230,22 @@ def record_processing_event(
             "memory_rss_mb": get_process_memory_mb(),
         }
     )
+    if input_payload is not None:
+        payload["input"] = input_payload
+    if output_payload is not None:
+        payload["output"] = output_payload
+    if decision:
+        payload["decision"] = decision
     if raw_text is not None:
         payload["raw_text_sha256"] = stable_hash(raw_text)
         payload["raw_text_sample"] = truncate_debug_text(raw_text)
         raw_text_chars = len(raw_text)
         payload["raw_text_chars"] = raw_text_chars
     if error is not None:
+        payload["error"] = {
+            "class": error.__class__.__name__,
+            "message": truncate_debug_text(str(error), 1000),
+        }
         payload["error_class"] = error.__class__.__name__
         payload["error_message"] = truncate_debug_text(str(error), 1000)
         if getattr(settings, "DEBUG", False):
@@ -183,7 +256,9 @@ def record_processing_event(
                 2000,
             )
 
-    clean_payload = {key: value for key, value in payload.items() if value is not None}
+    clean_payload = redact_trace_payload(
+        {key: value for key, value in payload.items() if value is not None}
+    )
     try:
         return ExtractionLog.objects.create(
             process_run=process_run,
@@ -222,6 +297,10 @@ def stage_timer(
     provider: str = "",
     model: str = "",
     raw_payload: dict[str, Any] | None = None,
+    agent: str = "",
+    attempt: int = 0,
+    input_payload: dict[str, Any] | None = None,
+    decision: str = "",
 ):
     """Mide una etapa del pipeline y registra éxito o fallo con contexto."""
     started_monotonic = time.monotonic()
@@ -235,6 +314,10 @@ def stage_timer(
         provider=provider,
         model=model,
         started_at=started_at,
+        agent=agent,
+        attempt=attempt,
+        input_payload=input_payload,
+        decision=decision,
         raw_payload=raw_payload,
     )
     event_payload: dict[str, Any] = {}
@@ -254,6 +337,9 @@ def stage_timer(
             finished_at=finished_at,
             duration_ms=int((time.monotonic() - started_monotonic) * 1000),
             error=error,
+            agent=agent,
+            attempt=attempt,
+            input_payload=input_payload,
             raw_payload={**(raw_payload or {}), **event_payload},
         )
         raise
@@ -275,6 +361,11 @@ def stage_timer(
             raw_text_chars=event_payload.pop("raw_text_chars", None),
             prompt_chars=event_payload.pop("prompt_chars", None),
             response_chars=event_payload.pop("response_chars", None),
+            agent=event_payload.pop("agent", agent),
+            attempt=event_payload.pop("attempt", attempt),
+            input_payload=event_payload.pop("input", input_payload),
+            output_payload=event_payload.pop("output", None),
+            decision=event_payload.pop("decision", decision),
             raw_payload={**(raw_payload or {}), **event_payload},
         )
 
@@ -479,6 +570,73 @@ def summarize_job_diagnostics(job: ProcessRun) -> dict[str, Any]:
         "events": events,
         "source_images": source_images,
         "recommendations": recommendations,
+    }
+
+
+def _trace_event(log: ExtractionLog) -> dict[str, Any]:
+    payload = redact_trace_payload(dict(log.raw_payload or {}))
+    status = payload.get("status") or ("failed" if log.is_error else "completed")
+    error_payload = payload.get("error")
+    if not error_payload and (log.is_error or payload.get("error_message")):
+        error_payload = {
+            "class": payload.get("error_class") or "",
+            "message": payload.get("error_message") or log.notes,
+        }
+    return {
+        "id": log.pk,
+        "timestamp": log.created_at.isoformat() if log.created_at else None,
+        "stage": log.stage,
+        "status": status,
+        "source_image_id": log.source_image_id,
+        "sequence_index": log.sequence_index,
+        "agent": payload.get("agent") or "",
+        "provider": log.provider or payload.get("provider") or "",
+        "model": log.model or payload.get("model") or "",
+        "ocr_mode": log.ocr_mode or payload.get("ocr_mode") or "",
+        "attempt": payload.get("attempt") or 0,
+        "duration_ms": payload.get("duration_ms") or 0,
+        "input": payload.get("input") or {},
+        "output": payload.get("output") or {},
+        "decision": payload.get("decision") or "",
+        "error": error_payload,
+        "notes": log.notes or payload.get("notes") or "",
+        "raw_payload": payload,
+    }
+
+
+def summarize_processing_trace(job: ProcessRun) -> dict[str, Any]:
+    """Devuelve la trazabilidad ordenada y orientada al flujo del pipeline."""
+    logs = list(job.extraction_logs.select_related("source_image").order_by("id"))
+    total_images = real_source_images_queryset(job).count()
+    processed_images = (
+        real_source_images_queryset(job)
+        .filter(ocr_status=SourceImage.OCRStatus.PROCESSED)
+        .count()
+    )
+    failed_images = (
+        real_source_images_queryset(job)
+        .filter(ocr_status=SourceImage.OCRStatus.FAILED)
+        .count()
+    )
+    duration_ms = None
+    if job.started_at and job.finished_at:
+        duration_ms = int((job.finished_at - job.started_at).total_seconds() * 1000)
+    elif job.started_at:
+        duration_ms = int((timezone.now() - job.started_at).total_seconds() * 1000)
+    return {
+        "job_id": job.pk,
+        "status": job.status,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "duration_ms": duration_ms,
+        "summary": {
+            "total_images": total_images,
+            "processed_images": processed_images,
+            "failed_images": failed_images,
+            "total_records": job.deposits.count(),
+            "terminal_status": is_terminal_status(job.status),
+        },
+        "events": [_trace_event(log) for log in logs],
     }
 
 

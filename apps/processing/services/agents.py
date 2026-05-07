@@ -307,7 +307,11 @@ class ProcessingSupervisorAgent:
             try:
                 # === FASE 1: OCR ===
                 ocr_result = self._run_ocr_phase(
-                    process_run, source_image, current_config, log_callback
+                    process_run,
+                    source_image,
+                    current_config,
+                    log_callback,
+                    attempt_number,
                 )
                 if not ocr_result or ocr_result.get("error"):
                     raise Exception(f"OCR failed: {ocr_result.get('error')}")
@@ -327,7 +331,14 @@ class ProcessingSupervisorAgent:
                     last_ocr_text = ocr_result.get("text", "")
                 else:
                     # === FASE 2: CLEANING ===
-                    cleaning_result = self._run_cleaning_phase(ocr_result, log_callback)
+                    cleaning_result = self._run_cleaning_phase(
+                        process_run,
+                        source_image,
+                        ocr_result,
+                        current_config,
+                        log_callback,
+                        attempt_number,
+                    )
 
                     # === FASE 3: STRUCTURING ===
                     structured_result = self._run_structuring_phase(
@@ -336,6 +347,7 @@ class ProcessingSupervisorAgent:
                         cleaning_result.cleaned_text,
                         current_config,
                         log_callback,
+                        attempt_number,
                     )
                 if not structured_result or structured_result.get("error"):
                     raise Exception(
@@ -383,7 +395,15 @@ class ProcessingSupervisorAgent:
                         source_image,
                         "validation_passed",
                         current_config,
+                        agent="ValidationAgent",
+                        attempt=attempt_number,
                         notes=f"All records valid (attempt {attempt_number}, confidence: {avg_confidence:.2f})",
+                        input_payload={"records_count": len(structured_result["records"])},
+                        output_payload={
+                            "records_validated": len(validation_results),
+                            "avg_confidence": avg_confidence,
+                        },
+                        decision="accept records for persistence",
                         raw_payload={"records_validated": len(validation_results)},
                     )
                     final_records = structured_result["records"]
@@ -396,7 +416,16 @@ class ProcessingSupervisorAgent:
                         source_image,
                         "validation_failed",
                         current_config,
+                        agent="ValidationAgent",
+                        attempt=attempt_number,
                         notes=f"Validation failed for {failed_count}/{len(validation_results)} records (attempt {attempt_number})",
+                        input_payload={"records_count": len(structured_result["records"])},
+                        output_payload={
+                            "failed_records": failed_count,
+                            "total_records": len(validation_results),
+                            "avg_confidence": avg_confidence,
+                        },
+                        decision="ask retry agent for next step",
                         raw_payload={
                             "failed_records": failed_count,
                             "total_records": len(validation_results),
@@ -412,6 +441,17 @@ class ProcessingSupervisorAgent:
                         ),
                         current_config=current_config,
                     )
+                    self._log_retry_decision(
+                        process_run,
+                        source_image,
+                        current_config,
+                        log_callback,
+                        attempt_number,
+                        retry_decision,
+                        error_type="validation_failed",
+                        validation_results=validation_results,
+                        confidence=avg_confidence,
+                    )
 
                     if not retry_decision.should_retry:
                         log_callback(
@@ -419,7 +459,16 @@ class ProcessingSupervisorAgent:
                             source_image,
                             "retry_decision_no_retry",
                             current_config,
+                            agent="RetryAgent",
+                            attempt=attempt_number,
                             notes=f"No retry: {retry_decision.reason}",
+                            input_payload={"error_type": "validation_failed"},
+                            output_payload={
+                                "should_retry": False,
+                                "strategy": retry_decision.strategy,
+                                "reason": retry_decision.reason,
+                            },
+                            decision="stop retry loop",
                             raw_payload={"strategy": retry_decision.strategy},
                         )
                         # Usar agregación para seleccionar mejor intento
@@ -435,7 +484,18 @@ class ProcessingSupervisorAgent:
                             source_image,
                             "retry_applied",
                             current_config,
+                            agent="RetryAgent",
+                            attempt=attempt_number,
                             notes=f"Retrying with strategy: {retry_decision.strategy}",
+                            input_payload={"error_type": "validation_failed"},
+                            output_payload={
+                                "should_retry": True,
+                                "strategy": retry_decision.strategy.value,
+                                "reason": retry_decision.reason,
+                                "next_ocr_mode": retry_decision.next_ocr_mode,
+                                "next_llm_model": retry_decision.next_llm_model,
+                            },
+                            decision="retry with adjusted runtime config",
                             raw_payload={"strategy": retry_decision.strategy.value},
                         )
                         attempt_number += 1
@@ -448,8 +508,13 @@ class ProcessingSupervisorAgent:
                     source_image,
                     f"error_{error_type}",
                     current_config,
+                    agent="ProcessingSupervisorAgent",
+                    attempt=attempt_number,
                     notes=f"Error on attempt {attempt_number}: {str(e)}",
                     is_error=True,
+                    input_payload={"error_type": error_type},
+                    output_payload={"error": str(e)},
+                    decision="ask retry agent after processing error",
                     raw_payload={"error_class": error_type},
                 )
 
@@ -457,6 +522,15 @@ class ProcessingSupervisorAgent:
                     image_id=source_image.id,
                     error_type=error_type,
                     current_config=current_config,
+                )
+                self._log_retry_decision(
+                    process_run,
+                    source_image,
+                    current_config,
+                    log_callback,
+                    attempt_number,
+                    retry_decision,
+                    error_type=error_type,
                 )
 
                 if (
@@ -469,8 +543,13 @@ class ProcessingSupervisorAgent:
                         source_image,
                         "error_final",
                         current_config,
+                        agent="ProcessingSupervisorAgent",
+                        attempt=attempt_number,
                         notes=f"Cannot recover from {error_type}",
                         is_error=True,
+                        input_payload={"error_type": error_type},
+                        output_payload={"error": str(e)},
+                        decision="stop processing this source image",
                     )
                     break
 
@@ -502,6 +581,7 @@ class ProcessingSupervisorAgent:
                 source_image,
                 "persistence_mismatch",
                 runtime_config,
+                agent="ValidationPersistenceAgent",
                 notes=message,
                 is_error=True,
                 raw_payload={
@@ -528,6 +608,7 @@ class ProcessingSupervisorAgent:
                 source_image,
                 "persistence_mismatch",
                 runtime_config,
+                agent="ValidationPersistenceAgent",
                 notes=message,
                 is_error=True,
                 raw_payload={
@@ -566,6 +647,22 @@ class ProcessingSupervisorAgent:
                 source_image,
                 "aggregation_summary",
                 runtime_config,
+                agent="AggregationAgent",
+                input_payload={
+                    "attempts_count": len(aggregated.all_attempts),
+                },
+                output_payload={
+                    "best_attempt": (
+                        aggregated.best_attempt.attempt_number
+                        if aggregated.best_attempt
+                        else None
+                    ),
+                    "consensus_records": len(aggregated.consensus_records),
+                    "conflicting_records": len(aggregated.conflicting_records),
+                    "aggregation_confidence": aggregated.aggregation_confidence,
+                    "recommendation": aggregated.recommendation,
+                },
+                decision=aggregated.recommendation,
                 raw_payload={
                     "total_attempts": len(aggregated.all_attempts),
                     "consensus_records": len(aggregated.consensus_records),
@@ -577,7 +674,9 @@ class ProcessingSupervisorAgent:
 
         return records_count
 
-    def _run_ocr_phase(self, process_run, source_image, runtime_config, log_callback):
+    def _run_ocr_phase(
+        self, process_run, source_image, runtime_config, log_callback, attempt_number=1
+    ):
         """Fase 1: Extracción OCR."""
         try:
             with stage_timer(
@@ -587,6 +686,8 @@ class ProcessingSupervisorAgent:
                 runtime_config=runtime_config,
                 provider=runtime_config.ocr_provider,
                 model=_active_ocr_model(runtime_config),
+                agent="OCRAgent",
+                attempt=attempt_number,
             ):
                 validate_source_image(source_image)
 
@@ -597,6 +698,12 @@ class ProcessingSupervisorAgent:
                 runtime_config=runtime_config,
                 provider=runtime_config.ocr_provider,
                 model=_active_ocr_model(runtime_config),
+                agent="OCRAgent",
+                attempt=attempt_number,
+                input_payload={
+                    "image_file": source_image.source_name,
+                    "ocr_mode": runtime_config.ocr_mode,
+                },
             ) as event:
                 result = extract_raw_text(source_image, runtime_config)
                 event["provider"] = result["provider"]
@@ -605,6 +712,13 @@ class ProcessingSupervisorAgent:
                 event["raw_text_chars"] = len(result.get("text") or "")
                 event["ocr_raw_text_chars"] = len(result.get("text") or "")
                 event["ocr_raw_text_sample"] = truncate_debug_text(result.get("text"))
+                event["output"] = {
+                    "raw_text_preview": truncate_debug_text(result.get("text")),
+                    "raw_text_chars": len(result.get("text") or ""),
+                    "score": (result.get("payload") or {}).get("score"),
+                    "mode": result.get("mode"),
+                }
+                event["decision"] = "selected OCR text for structuring"
                 event.update(
                     {
                         key: value
@@ -617,10 +731,38 @@ class ProcessingSupervisorAgent:
         except Exception as e:
             return {"error": str(e), "text": ""}
 
-    def _run_cleaning_phase(self, ocr_result, log_callback):
+    def _run_cleaning_phase(
+        self,
+        process_run,
+        source_image,
+        ocr_result,
+        runtime_config,
+        log_callback,
+        attempt_number=1,
+    ):
         """Fase 2: Limpieza de OCR."""
         raw_text = ocr_result.get("text", "")
         cleaning_result = self.cleaning_agent.run(raw_text, None)
+        log_callback(
+            process_run,
+            source_image,
+            "ocr_cleaned",
+            runtime_config,
+            agent="CleaningAgent",
+            attempt=attempt_number,
+            input_payload={
+                "ocr_text_preview": truncate_debug_text(raw_text),
+                "ocr_text_chars": len(raw_text or ""),
+            },
+            output_payload={
+                "cleaned_text_preview": truncate_debug_text(
+                    cleaning_result.cleaned_text
+                ),
+                "cleaned_text_chars": len(cleaning_result.cleaned_text or ""),
+                "corrections": getattr(cleaning_result, "corrections_applied", []),
+            },
+            decision="normalize OCR text before LLM structuring",
+        )
         return cleaning_result
 
     def _run_structuring_phase(
@@ -630,6 +772,7 @@ class ProcessingSupervisorAgent:
         text,
         runtime_config,
         log_callback,
+        attempt_number=1,
         stage="llm_structuring",
     ):
         """Fase 3: Extracción LLM."""
@@ -641,6 +784,12 @@ class ProcessingSupervisorAgent:
                 runtime_config=runtime_config,
                 provider=runtime_config.llm_provider,
                 model=runtime_config.llm_model,
+                agent="StructuringAgent",
+                attempt=attempt_number,
+                input_payload={
+                    "ocr_text_preview": truncate_debug_text(text),
+                    "ocr_text_chars": len(text or ""),
+                },
             ) as event:
                 result = extract_structured_data(source_image, text, runtime_config)
                 event["provider"] = result["provider"]
@@ -649,6 +798,12 @@ class ProcessingSupervisorAgent:
                 event["structured_records_count"] = len(result["records"])
                 event["ocr_raw_text_chars"] = len(text or "")
                 event["ocr_raw_text_sample"] = truncate_debug_text(text)
+                event["output"] = {
+                    "records_count": len(result["records"]),
+                    "records_preview": result["records"][:5],
+                    "provider_payload": result.get("payload") or {},
+                }
+                event["decision"] = "structured OCR text into deposit records"
                 event.update(result.get("payload") or {})
             return result
         except Exception as e:
@@ -664,7 +819,13 @@ class ProcessingSupervisorAgent:
             if attempt.get("text") and not attempt.get("error")
         ]
         if len(viable_attempts) < 2:
-            cleaning_result = self._run_cleaning_phase(ocr_result, log_callback)
+            cleaning_result = self._run_cleaning_phase(
+                process_run,
+                source_image,
+                ocr_result,
+                runtime_config,
+                log_callback,
+            )
             structured_result = self._run_structuring_phase(
                 process_run,
                 source_image,
@@ -693,7 +854,10 @@ class ProcessingSupervisorAgent:
                 },
             }
             cleaning_result = self._run_cleaning_phase(
+                process_run,
+                source_image,
                 candidate_ocr_result,
+                runtime_config,
                 log_callback,
             )
             structured_result = self._run_structuring_phase(
@@ -762,6 +926,65 @@ class ProcessingSupervisorAgent:
             },
         )
         return selected
+
+    def _log_retry_decision(
+        self,
+        process_run,
+        source_image,
+        runtime_config,
+        log_callback,
+        attempt_number,
+        retry_decision,
+        *,
+        error_type,
+        validation_results=None,
+        confidence=None,
+    ):
+        issues = []
+        for result in validation_results or []:
+            issues.extend(
+                {
+                    "field": issue.field,
+                    "issue": issue.issue,
+                    "severity": issue.severity,
+                    "value": issue.value,
+                }
+                for issue in getattr(result, "validation_issues", [])
+            )
+        log_callback(
+            process_run,
+            source_image,
+            "retry_decision",
+            runtime_config,
+            agent="RetryAgent",
+            attempt=attempt_number,
+            input_payload={
+                "error_type": error_type,
+                "validation_errors": issues,
+                "confidence": confidence,
+            },
+            output_payload={
+                "should_retry": retry_decision.should_retry,
+                "strategy": retry_decision.strategy.value,
+                "reason": retry_decision.reason,
+                "max_retries_remaining": retry_decision.max_retries_remaining,
+                "next_ocr_mode": retry_decision.next_ocr_mode,
+                "next_llm_model": retry_decision.next_llm_model,
+                "next_timeout_multiplier": retry_decision.next_timeout_multiplier,
+            },
+            decision=(
+                "retry current source image"
+                if retry_decision.should_retry
+                else "stop retry loop"
+            ),
+            notes=retry_decision.reason,
+            raw_payload={
+                "error_type": error_type,
+                "should_retry": retry_decision.should_retry,
+                "strategy": retry_decision.strategy.value,
+                "reason": retry_decision.reason,
+            },
+        )
 
     def _validate_records(self, records, runtime_config):
         """Fase 4: Validación inteligente."""

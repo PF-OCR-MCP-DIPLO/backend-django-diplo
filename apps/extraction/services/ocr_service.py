@@ -231,6 +231,11 @@ def _run_vision(source_image, runtime_config):
         resolved_mode,
         text,
     )
+    if not (text or "").strip():
+        payload["empty_provider_response"] = True
+        payload["provider_response_chars"] = len(
+            getattr(provider, "last_response_text", "") or ""
+        )
     provider_error = getattr(provider, "last_error", None)
     if provider_error is not None:
         payload["provider_error_class"] = provider_error.__class__.__name__

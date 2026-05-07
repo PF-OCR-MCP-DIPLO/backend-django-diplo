@@ -6,6 +6,7 @@ logs técnicos y consolidación de contadores de estado.
 
 import time
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -15,7 +16,10 @@ from apps.processing.models import (
     SourceImage,
 )
 from apps.processing.services.agents import ProcessingSupervisorAgent
-from apps.processing.services.diagnostics import record_processing_event, stage_timer
+from apps.processing.services.diagnostics import (
+    record_processing_event,
+    stage_timer,
+)
 from apps.processing.services.settings_service import (
     as_snapshot_dict,
     get_runtime_config,
@@ -67,6 +71,11 @@ def _create_log(process_run, source_image, stage, runtime_config, **kwargs):
         model=kwargs.get("model", ""),
         raw_payload=kwargs.get("raw_payload", {}),
         raw_text=kwargs.get("raw_text", ""),
+        agent=kwargs.get("agent", ""),
+        attempt=kwargs.get("attempt", 0),
+        input_payload=kwargs.get("input_payload"),
+        output_payload=kwargs.get("output_payload"),
+        decision=kwargs.get("decision", ""),
         notes=kwargs.get("notes", ""),
     )
 
@@ -76,6 +85,21 @@ def _safe_create_log(process_run, source_image, stage, runtime_config, **kwargs)
         return _create_log(process_run, source_image, stage, runtime_config, **kwargs)
     except Exception:
         return None
+
+
+def _max_job_seconds() -> int:
+    try:
+        return max(1, int(getattr(settings, "PROCESSING_MAX_JOB_SECONDS", 900)))
+    except (TypeError, ValueError):
+        return 900
+
+
+def _ensure_job_time_budget(process_run, started_monotonic):
+    elapsed = time.monotonic() - started_monotonic
+    if elapsed > _max_job_seconds():
+        raise TimeoutError(
+            f"Processing job exceeded max duration of {_max_job_seconds()} seconds"
+        )
 
 
 def _build_runtime_snapshot(runtime_config):
@@ -94,10 +118,31 @@ def _sync_job_counters(process_run):
 def prepare_job_for_full_processing(process_run):
     """Reinicia una corrida para reprocesarla de forma completa."""
     runtime_config = get_runtime_config()
+    record_processing_event(
+        process_run=process_run,
+        stage="prepare_started",
+        status="started",
+        runtime_config=runtime_config,
+        agent="JobRunner",
+        input_payload={
+            "job_id": process_run.pk,
+            "filename": process_run.original_filename,
+            "previous_status": process_run.status,
+            "settings_snapshot": _build_runtime_snapshot(runtime_config),
+        },
+        decision="prepare full reprocessing",
+    )
     with stage_timer(
         process_run=process_run,
         stage="job_prepare",
         runtime_config=runtime_config,
+        agent="JobRunner",
+        input_payload={
+            "job_id": process_run.pk,
+            "filename": process_run.original_filename,
+            "previous_status": process_run.status,
+            "settings_snapshot": _build_runtime_snapshot(runtime_config),
+        },
     ) as event:
         with transaction.atomic():
             process_run = ProcessRun.objects.select_for_update().get(pk=process_run.pk)
@@ -140,6 +185,19 @@ def prepare_job_for_full_processing(process_run):
                     "updated_at",
                 ]
             )
+            record_processing_event(
+                process_run=process_run,
+                stage="job_marked_processing",
+                status="completed",
+                runtime_config=runtime_config,
+                agent="JobRunner",
+                output_payload={
+                    "job_id": process_run.pk,
+                    "status": process_run.status,
+                    "total_images": process_run.total_images,
+                },
+                decision="job ready for processing",
+            )
             real_source_images_queryset(process_run).update(
                 ocr_status=SourceImage.OCRStatus.PENDING,
                 ocr_raw_text="",
@@ -147,6 +205,25 @@ def prepare_job_for_full_processing(process_run):
                 ocr_provider=runtime_config.ocr_provider,
             )
             event["total_images"] = process_run.total_images
+            event["output"] = {
+                "job_id": process_run.pk,
+                "total_images": process_run.total_images,
+                "status": process_run.status,
+            }
+            event["decision"] = "prepared job and reset previous derived data"
+    record_processing_event(
+        process_run=process_run,
+        stage="prepare_completed",
+        status="completed",
+        runtime_config=runtime_config,
+        agent="JobRunner",
+        output_payload={
+            "job_id": process_run.pk,
+            "status": process_run.status,
+            "total_images": process_run.total_images,
+        },
+        decision="prepared job ready",
+    )
     return process_run, runtime_config
 
 
@@ -173,6 +250,7 @@ def mark_job_failed(job_id, error, runtime_config=None):
             None,
             "job_failed",
             runtime_config,
+            agent="JobRunner",
             notes=message,
             is_error=True,
         )
@@ -186,16 +264,25 @@ def process_prepared_job(process_run, runtime_config):
     failed_images = 0
     ocr_calls = 0
     llm_calls = 0
+    started_monotonic = time.monotonic()
     record_processing_event(
         process_run=process_run,
         stage="job_started",
-        status="completed",
+        status="started",
         runtime_config=runtime_config,
+        agent="JobRunner",
+        input_payload={
+            "job_id": process_run.pk,
+            "filename": process_run.original_filename,
+            "settings_snapshot": process_run.provider_config_snapshot
+            or _build_runtime_snapshot(runtime_config),
+        },
         raw_payload={
             "job_id": process_run.pk,
             "total_images": real_source_images_queryset(process_run).count(),
             "process_extracted_text": False,
         },
+        decision="start processing",
         notes=(
             "Supervisor processing started. extracted_text is retained as "
             "document context and is not structured by default."
@@ -207,13 +294,24 @@ def process_prepared_job(process_run, runtime_config):
             "sequence_index", "id"
         )
         for source_image in real_images:
+            _ensure_job_time_budget(process_run, started_monotonic)
             started_at = time.monotonic()
             try:
+                _safe_create_log(
+                    process_run,
+                    source_image,
+                    "source_image_started",
+                    runtime_config,
+                    agent="ProcessingSupervisorAgent",
+                    raw_payload={"source_name": source_image.source_name},
+                    decision="process source image",
+                )
                 with stage_timer(
                     process_run=process_run,
                     source_image=source_image,
                     stage="image_processing",
                     runtime_config=runtime_config,
+                    agent="ProcessingSupervisorAgent",
                     raw_payload={"source_name": source_image.source_name},
                 ) as event:
                     records_count = supervisor.process_image(
@@ -223,13 +321,15 @@ def process_prepared_job(process_run, runtime_config):
                         _safe_create_log,
                     )
                     event["records_count"] = records_count
+                    event["output"] = {"records_count": records_count}
                 ocr_calls += 1
                 llm_calls += 1
                 _safe_create_log(
                     process_run,
                     source_image,
-                    "image_processed",
+                    "source_image_completed",
                     runtime_config,
+                    agent="ProcessingSupervisorAgent",
                     provider=source_image.ocr_provider,
                     model=runtime_config.llm_model,
                     raw_payload={
@@ -239,6 +339,7 @@ def process_prepared_job(process_run, runtime_config):
                         "records_count": source_image.deposits.count(),
                         "persisted_records_count": source_image.deposits.count(),
                     },
+                    decision="source image reached terminal success state",
                     notes=(
                         "Image processed successfully"
                         if source_image.deposits.count() > 0
@@ -260,8 +361,9 @@ def process_prepared_job(process_run, runtime_config):
                 _safe_create_log(
                     process_run,
                     source_image,
-                    "image_failed",
+                    "source_image_failed",
                     runtime_config,
+                    agent="ProcessingSupervisorAgent",
                     provider=source_image.ocr_provider,
                     model=_active_ocr_model(runtime_config),
                     raw_payload={
@@ -269,6 +371,7 @@ def process_prepared_job(process_run, runtime_config):
                         "source_image_id": source_image.pk,
                         "duration_ms": int((time.monotonic() - started_at) * 1000),
                     },
+                    decision="mark source image failed and continue job",
                     notes=str(error),
                     is_error=True,
                 )
@@ -317,7 +420,8 @@ def process_prepared_job(process_run, runtime_config):
             None,
             "job_finished",
             runtime_config,
-            status="completed",
+            status=process_run.status,
+            agent="JobRunner",
             raw_payload={
                 "job_id": process_run.pk,
                 "status": process_run.status,
@@ -327,6 +431,7 @@ def process_prepared_job(process_run, runtime_config):
                 "number_of_ocr_calls": ocr_calls,
                 "number_of_llm_calls": llm_calls,
             },
+            decision="terminal status reached",
             notes=f"status={process_run.status}",
             is_error=process_run.status == ProcessRun.Status.FAILED,
         )

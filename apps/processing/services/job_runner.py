@@ -8,6 +8,7 @@ import threading
 from django.db import close_old_connections
 
 from apps.processing.models import ProcessRun
+from apps.processing.services.diagnostics import record_processing_event
 from apps.processing.services.orchestrator import (
     mark_job_failed,
     prepare_job_for_processing,
@@ -26,6 +27,14 @@ def start_job_processing(process_run: ProcessRun, *, force: bool = False) -> Pro
     if process_run.status == ProcessRun.Status.PROCESSING:
         raise RuntimeError("job_already_processing")
     if process_run.status == ProcessRun.Status.COMPLETED and not force:
+        record_processing_event(
+            process_run=process_run,
+            stage="job_already_terminal",
+            status="skipped",
+            agent="JobRunner",
+            input_payload={"job_id": process_run.pk, "status": process_run.status},
+            decision="skip processing because job is already terminal",
+        )
         return process_run
 
     with _running_jobs_lock:

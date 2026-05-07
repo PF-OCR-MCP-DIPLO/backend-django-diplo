@@ -234,6 +234,9 @@ def extract_structured_data(source_image, raw_text, runtime_config):
             "prompt_chars": prompt_chars,
             "response_chars": len(raw_response),
             "clean_response_chars": len(clean_response),
+            "raw_response_preview": truncate_debug_text(raw_response),
+            "clean_response_preview": truncate_debug_text(clean_response),
+            "empty_provider_response": not raw_response.strip(),
             "llm_timeout_seconds": timeout_seconds,
             "provider_error_class": (
                 provider_error.__class__.__name__ if provider_error else None

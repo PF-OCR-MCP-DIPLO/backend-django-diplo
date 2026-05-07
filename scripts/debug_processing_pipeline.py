@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int)
     parser.add_argument("--max-images", type=int)
     parser.add_argument("--report-json", type=Path)
+    parser.add_argument("--trace-json", type=Path)
     parser.add_argument("--report-md", type=Path)
     return parser.parse_args()
 
@@ -77,6 +78,7 @@ from apps.processing.services.diagnostics import (
     record_processing_event,
     stage_timer,
     summarize_job_diagnostics,
+    summarize_processing_trace,
 )
 from apps.processing.services.job_runner import start_job_processing
 from apps.processing.services.orchestrator import (
@@ -386,7 +388,27 @@ def run_async(job: ProcessRun) -> ProcessRun:
                 f"images={payload['processed_images']}/{payload['total_images']}"
             )
         time.sleep(1.5)
-    return ProcessRun.objects.get(pk=started.pk)
+    timed_out = ProcessRun.objects.get(pk=started.pk)
+    trace = summarize_processing_trace(timed_out)
+    last_event = trace["events"][-1] if trace["events"] else None
+    print(f"timeout waiting for terminal status after {args.timeout or 90}s")
+    if last_event:
+        print(
+            "last_event="
+            + json.dumps(
+                {
+                    "id": last_event["id"],
+                    "stage": last_event["stage"],
+                    "status": last_event["status"],
+                    "source_image_id": last_event["source_image_id"],
+                    "agent": last_event["agent"],
+                    "duration_ms": last_event["duration_ms"],
+                    "error": last_event["error"],
+                },
+                ensure_ascii=False,
+            )
+        )
+    return timed_out
 
 
 def probable_cause(report: dict) -> str:
@@ -503,6 +525,7 @@ def main() -> int:
         else:
             job = run_subset_sync(job)
         report = summarize_job_diagnostics(ProcessRun.objects.get(pk=job.pk))
+        trace = summarize_processing_trace(ProcessRun.objects.get(pk=job.pk))
         print_report(report)
         if args.report_json:
             args.report_json.write_text(
@@ -510,6 +533,10 @@ def main() -> int:
             )
         if args.report_md:
             write_markdown(report, args.report_md)
+        if args.trace_json:
+            args.trace_json.write_text(
+                json.dumps(trace, indent=2, sort_keys=True), encoding="utf-8"
+            )
         if report["job"]["status"] == "failed":
             return 2
         return 0
